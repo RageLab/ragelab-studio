@@ -1,0 +1,336 @@
+<script lang="ts">
+  import { onMount } from "svelte";
+  import {
+    chooseWorkspaceDirectory,
+    getStudioInfo,
+    type StudioInfo,
+  } from "$lib/native";
+
+  let studioInfo: StudioInfo | null = null;
+  let workspacePath: string | null = null;
+  let statusMessage = "";
+
+  onMount(async () => {
+    try {
+      studioInfo = await getStudioInfo();
+    } catch {
+      statusMessage = "Native bridge unavailable.";
+    }
+  });
+
+  async function openWorkspace() {
+    statusMessage = "";
+
+    try {
+      workspacePath = await chooseWorkspaceDirectory();
+    } catch (error) {
+      statusMessage =
+        error instanceof Error ? error.message : "Unable to open workspace.";
+    }
+  }
+</script>
+
+<svelte:head>
+  <title>RageLab Studio</title>
+  <meta
+    name="description"
+    content="Desktop visual interface for inspecting and working with RAGE assets through RageLab."
+  />
+</svelte:head>
+
+<main class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="mark">RL</span>
+      <div>
+        <strong>RageLab</strong>
+        <span>Studio</span>
+      </div>
+    </div>
+
+    <nav aria-label="Primary">
+      <button class="nav-item active" type="button">Workspace</button>
+      <button class="nav-item" type="button" disabled>Assets</button>
+      <button class="nav-item" type="button" disabled>Scene</button>
+      <button class="nav-item" type="button" disabled>Export</button>
+    </nav>
+
+    <div class="version">
+      {studioInfo ? studioInfo.product + " " + studioInfo.version : "RageLab Studio"}
+    </div>
+  </aside>
+
+  <section class="content">
+    <header>
+      <div>
+        <p class="eyebrow">Workspace</p>
+        <h1>Open an asset workspace</h1>
+        <p class="lede">
+          Select a local GTA V or FiveM workspace. RageLab owns parsing,
+          validation, editing, and export logic in Rust.
+        </p>
+      </div>
+
+      <button class="primary" type="button" onclick={openWorkspace}>
+        Open workspace
+      </button>
+    </header>
+
+    <section class="panel" aria-live="polite">
+      {#if workspacePath}
+        <p class="label">Selected directory</p>
+        <code>{workspacePath}</code>
+        <p class="detail">
+          Directory selection is connected. Workspace indexing will be attached
+          to the RageLab core through the native bridge.
+        </p>
+      {:else}
+        <p class="empty-title">No workspace open</p>
+        <p class="detail">
+          RageLab Studio does not parse RAGE formats in the frontend. The desktop
+          application delegates format and writer behavior to the Rust core.
+        </p>
+      {/if}
+
+      {#if statusMessage}
+        <p class="status">{statusMessage}</p>
+      {/if}
+    </section>
+  </section>
+</main>
+
+<style>
+  :global(*) {
+    box-sizing: border-box;
+  }
+
+  :global(html) {
+    background: #0d0f12;
+    color-scheme: dark;
+    font-family:
+      Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+      "Segoe UI", sans-serif;
+  }
+
+  :global(body) {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100vh;
+    background:
+      radial-gradient(circle at 76% 8%, rgba(255, 255, 255, 0.035), transparent 32%),
+      #0d0f12;
+    color: #f4f4f5;
+  }
+
+  button {
+    font: inherit;
+  }
+
+  .shell {
+    min-height: 100vh;
+    display: grid;
+    grid-template-columns: 224px minmax(0, 1fr);
+  }
+
+  .sidebar {
+    min-height: 100vh;
+    padding: 22px 16px;
+    border-right: 1px solid #23262b;
+    background: rgba(14, 16, 19, 0.96);
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .brand div {
+    display: grid;
+    gap: 1px;
+  }
+
+  .brand strong {
+    font-size: 15px;
+    letter-spacing: 0.01em;
+  }
+
+  .brand span:not(.mark) {
+    color: #888e98;
+    font-size: 12px;
+  }
+
+  .mark {
+    width: 34px;
+    height: 34px;
+    border: 1px solid #3b4048;
+    border-radius: 8px;
+    display: grid;
+    place-items: center;
+    background: #171a1f;
+    color: #d8dbe0;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+  }
+
+  nav {
+    display: grid;
+    gap: 5px;
+  }
+
+  .nav-item {
+    width: 100%;
+    padding: 9px 10px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: #777d87;
+    text-align: left;
+  }
+
+  .nav-item.active {
+    background: #1a1d22;
+    color: #f5f5f5;
+  }
+
+  .nav-item:disabled {
+    opacity: 0.45;
+  }
+
+  .version {
+    margin-top: auto;
+    padding: 0 10px;
+    color: #666c75;
+    font-size: 11px;
+  }
+
+  .content {
+    width: min(1040px, calc(100vw - 224px));
+    padding: 58px 64px;
+  }
+
+  header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 36px;
+    margin-bottom: 40px;
+  }
+
+  .eyebrow {
+    margin: 0 0 10px;
+    color: #787f89;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  h1 {
+    margin: 0;
+    max-width: 680px;
+    font-size: clamp(32px, 4vw, 48px);
+    line-height: 1.04;
+    letter-spacing: -0.035em;
+  }
+
+  .lede {
+    max-width: 650px;
+    margin: 18px 0 0;
+    color: #9aa0aa;
+    line-height: 1.65;
+  }
+
+  .primary {
+    flex: none;
+    margin-top: 26px;
+    border: 1px solid #d9dce1;
+    border-radius: 7px;
+    padding: 10px 14px;
+    background: #f4f4f5;
+    color: #111318;
+    font-weight: 650;
+    cursor: pointer;
+  }
+
+  .primary:hover {
+    background: #ffffff;
+  }
+
+  .panel {
+    min-height: 180px;
+    padding: 24px;
+    border: 1px solid #25292f;
+    border-radius: 12px;
+    background: rgba(20, 23, 27, 0.7);
+  }
+
+  .label {
+    margin: 0 0 10px;
+    color: #7d838c;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+
+  code {
+    display: block;
+    overflow-wrap: anywhere;
+    color: #e7e8ea;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    font-size: 13px;
+  }
+
+  .empty-title {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 650;
+  }
+
+  .detail {
+    max-width: 720px;
+    margin: 12px 0 0;
+    color: #858b95;
+    line-height: 1.6;
+  }
+
+  .status {
+    margin: 18px 0 0;
+    color: #d0a56b;
+    font-size: 13px;
+  }
+
+  @media (max-width: 760px) {
+    .shell {
+      grid-template-columns: 1fr;
+    }
+
+    .sidebar {
+      min-height: auto;
+      border-right: 0;
+      border-bottom: 1px solid #23262b;
+    }
+
+    nav,
+    .version {
+      display: none;
+    }
+
+    .content {
+      width: 100%;
+      padding: 36px 24px;
+    }
+
+    header {
+      flex-direction: column;
+    }
+
+    .primary {
+      margin-top: 0;
+    }
+  }
+</style>
