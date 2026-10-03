@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { join } from "@tauri-apps/api/path";
 import { open, save } from "@tauri-apps/plugin-dialog";
 
 export interface StudioInfo {
@@ -506,6 +507,28 @@ export async function chooseAssetFile(): Promise<string | null> {
   return typeof selected === "string" ? selected : null;
 }
 
+export async function chooseWorkspaceYmaps(
+  workspace: string,
+): Promise<string[]> {
+  const selected = await open({
+    directory: false,
+    multiple: true,
+    title: "Select workspace YMAPs",
+    defaultPath: workspace,
+    filters: [
+      {
+        name: "YMAP",
+        extensions: ["ymap"],
+      },
+    ],
+  });
+
+  if (Array.isArray(selected)) {
+    return selected;
+  }
+  return typeof selected === "string" ? [selected] : [];
+}
+
 export async function chooseWorkspaceYmap(
   workspace: string,
 ): Promise<string | null> {
@@ -523,6 +546,23 @@ export async function chooseWorkspaceYmap(
   });
 
   return typeof selected === "string" ? selected : null;
+}
+
+export async function chooseExportParentDirectory(): Promise<string | null> {
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title: "Choose export parent directory (outside workspace)",
+  });
+
+  return typeof selected === "string" ? selected : null;
+}
+
+export function buildExportOutputPath(
+  parent: string,
+  resourceName: string,
+): Promise<string> {
+  return join(parent, resourceName);
 }
 
 export async function chooseReplacementFile(

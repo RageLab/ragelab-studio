@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import AssetInspector from "$lib/components/AssetInspector.svelte";
   import SceneBrowser from "$lib/components/SceneBrowser.svelte";
+  import WorkspaceExport from "$lib/components/WorkspaceExport.svelte";
   import {
     chooseWorkspaceDirectory,
     discoverFiveMLegacy,
@@ -98,7 +99,16 @@
       >
         Scene
       </button>
-      <button class="nav-item" type="button" disabled>Export</button>
+      <button
+        class="nav-item"
+        type="button"
+        onclick={() =>
+          document
+            .getElementById("workspace-export")
+            ?.scrollIntoView({ behavior: "smooth", block: "start" })}
+      >
+        Export
+      </button>
     </nav>
 
     <div class="version">
@@ -203,6 +213,8 @@
     </section>
 
     <SceneBrowser {workspacePath} />
+
+    <WorkspaceExport {workspacePath} />
 
     <AssetInspector />
   </section>
