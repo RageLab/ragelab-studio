@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import AssetInspector from "$lib/components/AssetInspector.svelte";
   import {
     chooseWorkspaceDirectory,
     discoverFiveMLegacy,
@@ -76,7 +77,16 @@
 
     <nav aria-label="Primary">
       <button class="nav-item active" type="button">Workspace</button>
-      <button class="nav-item" type="button" disabled>Assets</button>
+      <button
+        class="nav-item"
+        type="button"
+        onclick={() =>
+          document
+            .getElementById("asset-inspector")
+            ?.scrollIntoView({ behavior: "smooth", block: "start" })}
+      >
+        Assets
+      </button>
       <button class="nav-item" type="button" disabled>Scene</button>
       <button class="nav-item" type="button" disabled>Export</button>
     </nav>
@@ -180,6 +190,8 @@
         </article>
       </div>
     </section>
+
+    <AssetInspector />
   </section>
 </main>
 

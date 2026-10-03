@@ -219,3 +219,13 @@ export async function chooseWorkspaceDirectory(): Promise<string | null> {
 
   return typeof selected === "string" ? selected : null;
 }
+
+export async function chooseAssetFile(): Promise<string | null> {
+  const selected = await open({
+    directory: false,
+    multiple: false,
+    title: "Open RAGE asset",
+  });
+
+  return typeof selected === "string" ? selected : null;
+}
