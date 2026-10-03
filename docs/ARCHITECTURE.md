@@ -54,6 +54,8 @@ Filesystem access, GTA/FiveM discovery, asset inspection, capability discovery, 
 
 Three.js is responsible only for visualizing `AssetPreviewReport` data. It may choose camera, lighting, materials, wireframes, and interaction behavior, but it must not reopen assets, derive writer eligibility, expand omitted geometry, or reinterpret a truncated/local-only preview as complete world-space data. YDD drawable selection is passed explicitly back to the core before rendering.
 
+Declarative editing follows the same rule. The frontend may map known operation schema fields to controls and assemble a versioned `OperationDocument`, but it exposes only writer IDs reported by per-file capabilities. Tauri requires absolute source/output paths, a separate output path, and absolute external replacement payload paths. The frontend invalidates a plan after any operation/output change and enables apply only for the exact document that received `allowed: true`. `ragelab-engine::apply_operation_document` still replans immediately before mutation and retains create-new output, semantic-reopen, and source-unchanged verification as the final authority.
+
 ## Repository independence
 
 RageLab Studio must build from its own repository. It must not depend on local paths to development clones or private workspaces. The committed core dependency uses the public RageLab Git repository pinned to an exact commit revision; `StudioInfo.coreRevision` exposes that revision to the desktop shell. Development against unreleased RageLab code may use a documented local override, but that override must never be committed.

@@ -28,7 +28,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Current status
 
-The repository currently provides the desktop application shell, native workspace directory selection, GTA V Legacy/FiveM discovery, and direct engine-backed asset inspection, capability discovery, and bounded YDR/YDD/YBN preview commands through a typed frontend/native bridge. The workspace shell includes a native asset picker, capability inspector, and an interactive Three.js viewport that renders only normalized preview data returned by the Rust core. YDD preview requires an explicit drawable index, and preview truncation/local-only metadata remains visible in the UI.
+The repository currently provides the desktop application shell, native workspace directory selection, GTA V Legacy/FiveM discovery, direct engine-backed asset inspection/capability discovery, bounded YDR/YDD/YBN preview, and plan-first declarative Legacy editing through a typed frontend/native bridge. The workspace shell includes a native asset picker, capability inspector, interactive Three.js viewport, and operation forms for the writers reported by RageLab core. Editing always chooses a separate output path, runs a dry-run plan first, invalidates that plan when parameters change, and delegates apply/replan/semantic verification to the Rust core.
 
 The Rust adapter is reproducibly pinned to RageLab core revision `15db923f11ab87737984c93f97e486b766bd4959`. Studio builds do not depend on a local RageLab checkout.
 
@@ -66,7 +66,9 @@ bun run tauri dev
 - No dependency-resolution logic duplicated from RageLab.
 - Source assets are not overwritten implicitly.
 - Native filesystem access is exposed through narrow desktop commands.
-- Asset inspection, capabilities, preview bounds, and GTA/FiveM discovery are delegated directly to `ragelab-engine`.
+- Asset inspection, capabilities, preview bounds, GTA/FiveM discovery, operation planning, and mutation are delegated directly to `ragelab-engine`.
+- Declarative edit forms are presentation/schema mapping only; a successful core plan is required before apply.
+- Studio operation source/output paths must be absolute, and output must differ from source; existing outputs remain rejected by the core create-new policy.
 - Core revisions are pinned by public Git commit; committed local path dependencies are not permitted.
 
 ## License

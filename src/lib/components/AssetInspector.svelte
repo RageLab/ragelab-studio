@@ -1,4 +1,5 @@
 <script lang="ts">
+  import DeclarativeEditor from "$lib/components/DeclarativeEditor.svelte";
   import PreviewViewport from "$lib/components/PreviewViewport.svelte";
   import {
     chooseAssetFile,
@@ -253,6 +254,11 @@
         <PreviewViewport report={previewReport} />
       {/if}
     {/if}
+
+    <DeclarativeEditor
+      sourcePath={inspection.path}
+      operations={capabilities.operations}
+    />
 
     <div class="operations-heading">
       <div>

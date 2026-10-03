@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 
 export interface StudioInfo {
   product: string;
@@ -176,6 +176,59 @@ export interface CorePreviewOptions {
   maxMaterials?: number;
 }
 
+
+export interface OperationSpec {
+  type: string;
+  [key: string]: unknown;
+}
+
+export interface OperationDocument {
+  schema: "ragelab.operation";
+  schemaVersion: 1;
+  source: string;
+  output: string;
+  operations: OperationSpec[];
+}
+
+export interface PlannedOperation {
+  index: number;
+  type: string;
+  allowed: boolean;
+  reason: string | null;
+  details: unknown;
+}
+
+export interface OperationPlan {
+  schema: "ragelab.operation.plan";
+  schemaVersion: number;
+  source: string;
+  output: string;
+  assetType: string;
+  allowed: boolean;
+  nonDestructive: boolean;
+  outputExists: boolean;
+  sourceBytes: number;
+  operations: PlannedOperation[];
+  reasons: string[];
+  writes: string[];
+}
+
+export interface OperationApplyResult {
+  schema: "ragelab.operation.apply";
+  schemaVersion: number;
+  source: string;
+  output: string;
+  assetType: string;
+  operationsApplied: number;
+  bytesWritten: number;
+  nonDestructive: boolean;
+  validation: {
+    semanticReopen: boolean;
+    sourceUnchanged: boolean;
+  };
+  details: unknown;
+}
+
 export function getStudioInfo(): Promise<StudioInfo> {
   return invoke<StudioInfo>("studio_info");
 }
@@ -210,6 +263,18 @@ export function previewAsset(
   });
 }
 
+export function planOperation(
+  document: OperationDocument,
+): Promise<OperationPlan> {
+  return invoke<OperationPlan>("core_operation_plan", { document });
+}
+
+export function applyOperation(
+  document: OperationDocument,
+): Promise<OperationApplyResult> {
+  return invoke<OperationApplyResult>("core_operation_apply", { document });
+}
+
 export async function chooseWorkspaceDirectory(): Promise<string | null> {
   const selected = await open({
     directory: true,
@@ -225,6 +290,29 @@ export async function chooseAssetFile(): Promise<string | null> {
     directory: false,
     multiple: false,
     title: "Open RAGE asset",
+  });
+
+  return typeof selected === "string" ? selected : null;
+}
+
+export async function chooseReplacementFile(
+  title = "Select replacement payload",
+): Promise<string | null> {
+  const selected = await open({
+    directory: false,
+    multiple: false,
+    title,
+  });
+
+  return typeof selected === "string" ? selected : null;
+}
+
+export async function chooseOperationOutput(
+  defaultPath?: string,
+): Promise<string | null> {
+  const selected = await save({
+    title: "Choose non-destructive output",
+    defaultPath,
   });
 
   return typeof selected === "string" ? selected : null;

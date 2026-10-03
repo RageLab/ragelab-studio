@@ -1,9 +1,10 @@
 use std::path::Path;
 
 use ragelab_engine::{
-    asset_capabilities, discover_fivem_legacy, discover_gta_v_legacy, inspect_asset, preview_asset,
-    AssetCapabilitiesReport, AssetInspectionReport, AssetPreviewReport, FiveMDiscoveryReport,
-    GtaVDiscoveryReport, PreviewOptions,
+    apply_operation_document, asset_capabilities, discover_fivem_legacy, discover_gta_v_legacy,
+    inspect_asset, plan_operation_document, preview_asset, AssetCapabilitiesReport,
+    AssetInspectionReport, AssetPreviewReport, FiveMDiscoveryReport, GtaVDiscoveryReport,
+    OperationApplyResult, OperationDocument, OperationPlan, PreviewOptions,
 };
 use serde::{Deserialize, Serialize};
 
@@ -96,6 +97,46 @@ fn core_asset_preview(request: PreviewRequest) -> Result<AssetPreviewReport, Str
     preview_asset(Path::new(&request.path), request.options()).map_err(core_error)
 }
 
+#[tauri::command]
+fn core_operation_plan(document: OperationDocument) -> Result<OperationPlan, String> {
+    ensure_studio_operation_paths(&document)?;
+    plan_operation_document(&document, Path::new(".")).map_err(core_error)
+}
+
+#[tauri::command]
+fn core_operation_apply(document: OperationDocument) -> Result<OperationApplyResult, String> {
+    ensure_studio_operation_paths(&document)?;
+    apply_operation_document(&document, Path::new(".")).map_err(core_error)
+}
+
+fn ensure_studio_operation_paths(document: &OperationDocument) -> Result<(), String> {
+    if !document.source.is_absolute() {
+        return Err("Studio operation source must be an absolute path".into());
+    }
+    if !document.output.is_absolute() {
+        return Err("Studio operation output must be an absolute path".into());
+    }
+    if document.source == document.output {
+        return Err("Studio operation output must differ from the source path".into());
+    }
+
+    for operation in &document.operations {
+        if let Some(replacement) = operation
+            .parameters
+            .get("replacement")
+            .and_then(|value| value.as_str())
+        {
+            if !Path::new(replacement).is_absolute() {
+                return Err(format!(
+                    "Studio operation replacement payload must be an absolute path: {replacement}"
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn core_error(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
@@ -110,7 +151,9 @@ pub fn run() {
             core_discover_fivem_legacy,
             core_asset_inspect,
             core_asset_capabilities,
-            core_asset_preview
+            core_asset_preview,
+            core_operation_plan,
+            core_operation_apply
         ])
         .run(tauri::generate_context!())
         .expect("error while running RageLab Studio");
@@ -141,5 +184,36 @@ mod tests {
     fn studio_info_exposes_pinned_core_revision() {
         let info = studio_info();
         assert_eq!(info.core_revision, RAGELAB_CORE_REVISION);
+    }
+
+    #[test]
+    fn operation_paths_must_be_absolute_and_non_destructive() {
+        let relative = OperationDocument {
+            schema: "ragelab.operation".into(),
+            schema_version: 1,
+            source: "source.ydr".into(),
+            output: "output.ydr".into(),
+            operations: vec![],
+        };
+        assert!(ensure_studio_operation_paths(&relative).is_err());
+
+        let source = std::env::current_dir().unwrap().join("source.ydr");
+        let same = OperationDocument {
+            schema: "ragelab.operation".into(),
+            schema_version: 1,
+            source: source.clone(),
+            output: source,
+            operations: vec![],
+        };
+        assert!(ensure_studio_operation_paths(&same).is_err());
+
+        let valid = OperationDocument {
+            schema: "ragelab.operation".into(),
+            schema_version: 1,
+            source: std::env::current_dir().unwrap().join("source.ydr"),
+            output: std::env::current_dir().unwrap().join("output.ydr"),
+            operations: vec![],
+        };
+        assert!(ensure_studio_operation_paths(&valid).is_ok());
     }
 }
