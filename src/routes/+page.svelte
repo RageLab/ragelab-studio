@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import AssetInspector from "$lib/components/AssetInspector.svelte";
+  import SceneBrowser from "$lib/components/SceneBrowser.svelte";
   import {
     chooseWorkspaceDirectory,
     discoverFiveMLegacy,
@@ -87,7 +88,16 @@
       >
         Assets
       </button>
-      <button class="nav-item" type="button" disabled>Scene</button>
+      <button
+        class="nav-item"
+        type="button"
+        onclick={() =>
+          document
+            .getElementById("scene-browser")
+            ?.scrollIntoView({ behavior: "smooth", block: "start" })}
+      >
+        Scene
+      </button>
       <button class="nav-item" type="button" disabled>Export</button>
     </nav>
 
@@ -133,8 +143,9 @@
         <p class="label">Selected directory</p>
         <code>{workspacePath}</code>
         <p class="detail">
-          Directory selection is connected. Workspace indexing will be attached
-          to the RageLab core through the native bridge.
+          This root scopes workspace scene assembly. YMAP provider resolution,
+          node transforms, collision state, and limits are evaluated by the
+          pinned RageLab core.
         </p>
       {:else}
         <p class="empty-title">No workspace open</p>
@@ -190,6 +201,8 @@
         </article>
       </div>
     </section>
+
+    <SceneBrowser {workspacePath} />
 
     <AssetInspector />
   </section>

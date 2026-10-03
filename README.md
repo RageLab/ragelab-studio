@@ -28,7 +28,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Current status
 
-The repository currently provides the desktop application shell, native workspace directory selection, GTA V Legacy/FiveM discovery, direct engine-backed asset inspection/capability discovery, bounded YDR/YDD/YBN preview, plan-first declarative Legacy editing, and a typed bridge for engine-owned YMAP workspace scene manifests. The workspace shell includes a native asset picker, capability inspector, interactive Three.js viewport, and operation forms for the writers reported by RageLab core. Editing always chooses a separate output path, runs a dry-run plan first, invalidates that plan when parameters change, and delegates apply/replan/semantic verification to the Rust core.
+The repository currently provides the desktop application shell, native workspace directory selection, GTA V Legacy/FiveM discovery, direct engine-backed asset inspection/capability discovery, bounded YDR/YDD/YBN preview, plan-first declarative Legacy editing, and an engine-backed YMAP workspace scene browser. The scene browser selects a YMAP inside the active workspace, renders core summary/warnings/limits and unresolved reasons, and visualizes core-provided node transforms as interactive Three.js proxies with collision relationship state. Editing always chooses a separate output path, runs a dry-run plan first, invalidates that plan when parameters change, and delegates apply/replan/semantic verification to the Rust core.
 
 The Rust adapter is reproducibly pinned to RageLab core revision `2bea1e6406b41f125061776a4a66bb92f57d8b8f`. Studio builds do not depend on a local RageLab checkout.
 
@@ -66,7 +66,8 @@ bun run tauri dev
 - No dependency-resolution logic duplicated from RageLab.
 - Source assets are not overwritten implicitly.
 - Native filesystem access is exposed through narrow desktop commands.
-- Asset inspection, capabilities, preview bounds, GTA/FiveM discovery, YMAP workspace scene assembly, operation planning, and mutation are delegated directly to `ragelab-engine`.
+- Asset inspection, capabilities, preview bounds, GTA/FiveM discovery, YMAP workspace scene assembly, provider resolution, scene transforms/collision state, operation planning, and mutation are delegated directly to `ragelab-engine`.
+- Scene proxy geometry is presentation-only: it visualizes returned transforms/resolution state and never substitutes for resolved asset geometry or missing core scale.
 - Declarative edit forms are presentation/schema mapping only; a successful core plan is required before apply.
 - Studio operation source/output paths must be absolute, and output must differ from source; existing outputs remain rejected by the core create-new policy.
 - Core revisions are pinned by public Git commit; committed local path dependencies are not permitted.

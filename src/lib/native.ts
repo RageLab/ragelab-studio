@@ -394,6 +394,25 @@ export async function chooseAssetFile(): Promise<string | null> {
   return typeof selected === "string" ? selected : null;
 }
 
+export async function chooseWorkspaceYmap(
+  workspace: string,
+): Promise<string | null> {
+  const selected = await open({
+    directory: false,
+    multiple: false,
+    title: "Open workspace YMAP",
+    defaultPath: workspace,
+    filters: [
+      {
+        name: "YMAP",
+        extensions: ["ymap"],
+      },
+    ],
+  });
+
+  return typeof selected === "string" ? selected : null;
+}
+
 export async function chooseReplacementFile(
   title = "Select replacement payload",
 ): Promise<string | null> {
