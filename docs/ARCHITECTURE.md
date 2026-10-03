@@ -57,6 +57,10 @@ Three.js is responsible only for visualizing core reports. For `AssetPreviewRepo
 
 For `SceneManifestReport`, Studio may render symbolic node proxies and selection affordances using the returned translation/quaternion and explicit scale when present. Proxy dimensions are presentation glyphs, not asset bounds. When core scale is absent, Studio must not report or infer identity scale. Provider resolution, unresolved reason codes, collision relationship state, truncation, and node limits remain authoritative core data.
 
+Resolved visual assets are loaded lazily through the existing bounded `AssetPreviewReport` service. Studio deduplicates by scene asset reference, limits a scene to 24 unique preview assets, uses at most 3 concurrent preview requests, and keeps a bounded cache. Real preview geometry is world-placed only for resolved YDR/YDD nodes that have both a core preview and explicit SceneManifest scale; real geometry instances are additionally capped at 128 nodes per viewport. Every other node remains a proxy fallback. These are presentation/performance budgets and do not replace the core preview hard caps.
+
+Collision remains stricter. A `SceneCollisionRelationship` marked `localOnly` proves a dependency, not a world placement transform. Studio may render a relationship marker, but it must not place YBN geometry in the world until the core provides explicit collision placement evidence.
+
 Declarative editing follows the same rule. The frontend may map known operation schema fields to controls and assemble a versioned `OperationDocument`, but it exposes only writer IDs reported by per-file capabilities. Tauri requires absolute source/output paths, a separate output path, and absolute external replacement payload paths. The frontend invalidates a plan after any operation/output change and enables apply only for the exact document that received `allowed: true`. `ragelab-engine::apply_operation_document` still replans immediately before mutation and retains create-new output, semantic-reopen, and source-unchanged verification as the final authority.
 
 ## Repository independence

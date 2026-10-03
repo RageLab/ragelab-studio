@@ -3,9 +3,14 @@
   import {
     assembleWorkspaceScene,
     chooseWorkspaceYmap,
+    type AssetPreviewReport,
     type SceneManifestReport,
     type SceneNodeReport,
   } from "$lib/native";
+  import {
+    loadSceneAssetPreviews,
+    type ScenePreviewLoadResult,
+  } from "$lib/scenePreviews";
 
   export let workspacePath: string | null = null;
 
@@ -17,8 +22,13 @@
   let maxNodes = "";
   let selectedNodeIndex: number | null = null;
   let selectedNode: SceneNodeReport | null = null;
+  let selectedPreviewError = "";
   let unresolvedNodes: SceneNodeReport[] = [];
   let collisionNodes: SceneNodeReport[] = [];
+  let assetPreviews: Record<number, AssetPreviewReport> = {};
+  let previewLoad: ScenePreviewLoadResult | null = null;
+  let previewLoading = false;
+  let sceneGeneration = 0;
 
   $: if (workspacePath !== activeWorkspacePath) {
     activeWorkspacePath = workspacePath;
@@ -27,6 +37,10 @@
     errorMessage = "";
     maxNodes = "";
     selectedNodeIndex = null;
+    assetPreviews = {};
+    previewLoad = null;
+    previewLoading = false;
+    sceneGeneration += 1;
   }
 
   $: selectedNode =
@@ -39,6 +53,11 @@
 
   $: collisionNodes =
     manifest?.nodes.filter((node) => node.collision !== null) ?? [];
+
+  $: selectedPreviewError =
+    selectedNode?.assetRef !== null && selectedNode?.assetRef !== undefined
+      ? (previewLoad?.errors[selectedNode.assetRef] ?? "")
+      : "";
 
   async function chooseYmap() {
     if (!workspacePath) {
@@ -57,6 +76,9 @@
       ymapPath = selected;
       manifest = null;
       selectedNodeIndex = null;
+      assetPreviews = {};
+      previewLoad = null;
+      sceneGeneration += 1;
       await loadScene();
     } catch (error) {
       errorMessage = errorMessageFor(error, "Unable to choose a workspace YMAP.");
@@ -68,9 +90,13 @@
       return;
     }
 
+    const generation = ++sceneGeneration;
     errorMessage = "";
     loading = true;
+    previewLoading = false;
     manifest = null;
+    assetPreviews = {};
+    previewLoad = null;
     selectedNodeIndex = null;
 
     let parsedMaxNodes: number | undefined;
@@ -85,18 +111,39 @@
     }
 
     try {
-      manifest = await assembleWorkspaceScene(
+      const assembled = await assembleWorkspaceScene(
         workspacePath,
         ymapPath,
         parsedMaxNodes,
       );
-    } catch (error) {
-      errorMessage = errorMessageFor(
-        error,
-        "RageLab core could not assemble this workspace scene.",
-      );
-    } finally {
+
+      if (generation !== sceneGeneration) {
+        return;
+      }
+
+      manifest = assembled;
       loading = false;
+      previewLoading = true;
+
+      const loaded = await loadSceneAssetPreviews(assembled);
+      if (generation !== sceneGeneration) {
+        return;
+      }
+
+      assetPreviews = loaded.previews;
+      previewLoad = loaded;
+    } catch (error) {
+      if (generation === sceneGeneration) {
+        errorMessage = errorMessageFor(
+          error,
+          "RageLab core could not assemble or preview this workspace scene.",
+        );
+      }
+    } finally {
+      if (generation === sceneGeneration) {
+        loading = false;
+        previewLoading = false;
+      }
     }
   }
 
@@ -214,9 +261,36 @@
         </div>
       {/if}
 
+      <div class:loading={previewLoading} class="preview-status">
+        <div>
+          <span>Resolved geometry</span>
+          <strong>
+            {Object.keys(assetPreviews).length}
+            {previewLoading ? " loading…" : " asset preview(s)"}
+          </strong>
+        </div>
+        <div>
+          <span>UI preview budget</span>
+          <strong>{previewLoad?.eligibleAssets ?? "—"} eligible</strong>
+        </div>
+        <div>
+          <span>Reused node refs</span>
+          <strong>{previewLoad?.reusedNodeReferences ?? 0}</strong>
+        </div>
+        <div>
+          <span>Omitted by UI budget</span>
+          <strong>{previewLoad?.omittedAssets ?? 0}</strong>
+        </div>
+        <div>
+          <span>No explicit scale</span>
+          <strong>{previewLoad?.skippedWithoutScale ?? 0}</strong>
+        </div>
+      </div>
+
       <div class="scene-layout">
         <SceneViewport
           {manifest}
+          previews={assetPreviews}
           bind:selectedNodeIndex
         />
 
@@ -275,6 +349,13 @@
             {:else}
               <div class="diagnostic">
                 No usable world transform was returned for this node.
+              </div>
+            {/if}
+
+            {#if selectedPreviewError}
+              <div class="diagnostic preview-failure">
+                <strong>Asset preview unavailable</strong>
+                <span>{selectedPreviewError}</span>
               </div>
             {/if}
 
@@ -556,6 +637,39 @@
     font-size: 10px;
   }
 
+  .preview-status {
+    margin-top: 8px;
+    padding: 10px 12px;
+    border: 1px solid #29323a;
+    border-radius: 8px;
+    background: #11161b;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 9px;
+  }
+
+  .preview-status.loading {
+    border-color: #3b4651;
+  }
+
+  .preview-status > div {
+    min-width: 0;
+    display: grid;
+    gap: 4px;
+  }
+
+  .preview-status span {
+    color: #737a84;
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+
+  .preview-status strong {
+    overflow-wrap: anywhere;
+    font-size: 11px;
+  }
+
   .scene-layout {
     margin-top: 12px;
     display: grid;
@@ -633,7 +747,14 @@
     color: #c2917e;
   }
 
-  .diagnostic.unresolved strong {
+  .diagnostic.preview-failure {
+    border-color: #493b25;
+    background: #19150e;
+    color: #bea578;
+  }
+
+  .diagnostic.unresolved strong,
+  .diagnostic.preview-failure strong {
     font-size: 10px;
   }
 
@@ -727,7 +848,8 @@
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
-    .limits {
+    .limits,
+    .preview-status {
       grid-template-columns: 1fr;
     }
 

@@ -28,9 +28,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Current status
 
-The repository currently provides the desktop application shell, native workspace directory selection, GTA V Legacy/FiveM discovery, direct engine-backed asset inspection/capability discovery, bounded YDR/YDD/YBN preview, plan-first declarative Legacy editing, and an engine-backed YMAP workspace scene browser. The scene browser selects a YMAP inside the active workspace, renders core summary/warnings/limits and unresolved reasons, and visualizes core-provided node transforms as interactive Three.js proxies with collision relationship state. Editing always chooses a separate output path, runs a dry-run plan first, invalidates that plan when parameters change, and delegates apply/replan/semantic verification to the Rust core.
+The repository currently provides the desktop application shell, native workspace directory selection, GTA V Legacy/FiveM discovery, direct engine-backed asset inspection/capability discovery, bounded YDR/YDD/YBN preview, plan-first declarative Legacy editing, and an engine-backed YMAP workspace scene browser. The scene browser selects a YMAP inside the active workspace, renders core summary/warnings/limits and unresolved reasons, and upgrades eligible resolved YDR/YDD nodes from symbolic proxies to bounded core preview geometry placed with the exact SceneManifest translation/quaternion/scale. Editing always chooses a separate output path, runs a dry-run plan first, invalidates that plan when parameters change, and delegates apply/replan/semantic verification to the Rust core.
 
-The Rust adapter is reproducibly pinned to RageLab core revision `2bea1e6406b41f125061776a4a66bb92f57d8b8f`. Studio builds do not depend on a local RageLab checkout.
+The Rust adapter is reproducibly pinned to RageLab core revision `ba5f7a64a89de3fb8e9e2acd59e0f086b093c00b`. Studio builds do not depend on a local RageLab checkout.
 
 ## Development
 
@@ -67,7 +67,9 @@ bun run tauri dev
 - Source assets are not overwritten implicitly.
 - Native filesystem access is exposed through narrow desktop commands.
 - Asset inspection, capabilities, preview bounds, GTA/FiveM discovery, YMAP workspace scene assembly, provider resolution, scene transforms/collision state, operation planning, and mutation are delegated directly to `ragelab-engine`.
-- Scene proxy geometry is presentation-only: it visualizes returned transforms/resolution state and never substitutes for resolved asset geometry or missing core scale.
+- Scene proxies remain the fallback for unresolved, unsupported, budget-limited, preview-failed, or scale-incomplete nodes. Eligible YDR/YDD nodes use core `AssetPreviewReport` geometry only when the SceneManifest provides an explicit scale.
+- Scene preview loading is UI-bounded to 24 unique assets with concurrency 3 and a bounded cache; the asset preview payload itself remains bounded by Rust core policy.
+- YBN collision dependencies remain `localOnly` and are not world-placed because the current SceneManifest does not provide an explicit collision placement transform.
 - Declarative edit forms are presentation/schema mapping only; a successful core plan is required before apply.
 - Studio operation source/output paths must be absolute, and output must differ from source; existing outputs remain rejected by the core create-new policy.
 - Core revisions are pinned by public Git commit; committed local path dependencies are not permitted.

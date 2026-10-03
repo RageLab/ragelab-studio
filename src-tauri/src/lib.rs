@@ -12,7 +12,7 @@ use ragelab_engine::{
 };
 use serde::{Deserialize, Serialize};
 
-const RAGELAB_CORE_REVISION: &str = "2bea1e6406b41f125061776a4a66bb92f57d8b8f";
+const RAGELAB_CORE_REVISION: &str = "ba5f7a64a89de3fb8e9e2acd59e0f086b093c00b";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]

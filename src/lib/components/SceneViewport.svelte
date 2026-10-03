@@ -3,9 +3,17 @@
   import * as THREE from "three";
   import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
-  import type { SceneManifestReport, SceneNodeReport } from "$lib/native";
+  import type {
+    AssetPreviewReport,
+    SceneManifestReport,
+    SceneNodeReport,
+  } from "$lib/native";
+  import { previewViewModel, type ModelPreviewPayload } from "$lib/preview";
+
+  const REAL_GEOMETRY_NODE_LIMIT = 128;
 
   export let manifest: SceneManifestReport | null = null;
+  export let previews: Record<number, AssetPreviewReport> = {};
   export let selectedNodeIndex: number | null = null;
 
   let container: HTMLDivElement;
@@ -19,11 +27,14 @@
   let animationFrame = 0;
   let mounted = false;
   let renderedManifest: SceneManifestReport | null = null;
+  let renderedPreviews: Record<number, AssetPreviewReport> | null = null;
   let previousSelectedNodeIndex: number | null = null;
 
   let renderError = "";
   let placedNodes = 0;
   let unplacedNodes = 0;
+  let realGeometryNodes = 0;
+  let fallbackProxyNodes = 0;
 
   onMount(() => {
     try {
@@ -41,8 +52,12 @@
     return cleanup;
   });
 
-  $: if (mounted && manifest !== renderedManifest) {
+  $: if (
+    mounted &&
+    (manifest !== renderedManifest || previews !== renderedPreviews)
+  ) {
     renderedManifest = manifest;
+    renderedPreviews = previews;
     renderCurrentManifest();
   }
 
@@ -102,6 +117,8 @@
     renderError = "";
     placedNodes = 0;
     unplacedNodes = 0;
+    realGeometryNodes = 0;
+    fallbackProxyNodes = 0;
 
     if (!manifest) {
       return;
@@ -113,13 +130,145 @@
         continue;
       }
 
-      const proxy = buildNodeProxy(node);
-      proxyGroup.add(proxy);
+      const assetPreview =
+        node.assetRef === null ? undefined : previews[node.assetRef];
+      const canUseRealGeometry =
+        node.resolution === "resolved" &&
+        node.transform.scale !== null &&
+        assetPreview !== undefined &&
+        realGeometryNodes < REAL_GEOMETRY_NODE_LIMIT;
+
+      const rendered = canUseRealGeometry
+        ? buildResolvedAssetNode(node, assetPreview)
+        : null;
+
+      if (rendered) {
+        proxyGroup.add(rendered);
+        realGeometryNodes += 1;
+      } else {
+        proxyGroup.add(buildNodeProxy(node));
+        fallbackProxyNodes += 1;
+      }
+
       placedNodes += 1;
     }
 
     updateSelectionStyles();
     fitCamera(proxyGroup);
+  }
+
+  function buildResolvedAssetNode(
+    node: SceneNodeReport,
+    report: AssetPreviewReport,
+  ): THREE.Group | null {
+    const transform = node.transform;
+    if (!transform || !transform.scale) {
+      return null;
+    }
+
+    const viewModel = previewViewModel(report);
+    if (!viewModel || viewModel.kind !== "model") {
+      return null;
+    }
+
+    const group = new THREE.Group();
+    group.name = "scene-asset-" + node.index;
+    group.userData.nodeIndex = node.index;
+    group.userData.selectable = true;
+    group.userData.renderMode = "assetPreview";
+
+    const geometryCount = appendModelPreview(viewModel.payload, group, node.index);
+    if (geometryCount === 0) {
+      disposeObject(group);
+      return null;
+    }
+
+    group.position.fromArray(transform.translation);
+    group.quaternion.fromArray(transform.rotation);
+    group.scale.fromArray(transform.scale);
+
+    if (node.collision) {
+      group.add(buildCollisionRelationshipMarker(node));
+    }
+
+    return group;
+  }
+
+  function appendModelPreview(
+    payload: ModelPreviewPayload,
+    target: THREE.Group,
+    nodeIndex: number,
+  ): number {
+    let count = 0;
+
+    for (const primitive of payload.primitives) {
+      if (!primitive.geometryIncluded || !primitive.geometry) {
+        continue;
+      }
+
+      const geometry = new THREE.BufferGeometry();
+      const positions: number[] = [];
+      for (const position of primitive.geometry.positions) {
+        positions.push(position[0], position[1], position[2]);
+      }
+      geometry.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(positions, 3),
+      );
+      geometry.setIndex(primitive.geometry.indices);
+
+      if (
+        primitive.geometry.normals &&
+        primitive.geometry.normals.length === primitive.geometry.positions.length
+      ) {
+        const normals: number[] = [];
+        for (const normal of primitive.geometry.normals) {
+          normals.push(normal[0], normal[1], normal[2]);
+        }
+        geometry.setAttribute(
+          "normal",
+          new THREE.Float32BufferAttribute(normals, 3),
+        );
+      } else {
+        geometry.computeVertexNormals();
+      }
+
+      const material = new THREE.MeshStandardMaterial({
+        color: 0xbfc6cf,
+        roughness: 0.82,
+        metalness: 0.04,
+        side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.name =
+        "scene-node-" +
+        nodeIndex +
+        "-model-" +
+        primitive.modelIndex +
+        "-geometry-" +
+        primitive.geometryIndex;
+      mesh.userData.nodeIndex = nodeIndex;
+      mesh.userData.selectable = true;
+      target.add(mesh);
+      count += 1;
+    }
+
+    return count;
+  }
+
+  function buildCollisionRelationshipMarker(node: SceneNodeReport): THREE.Mesh {
+    const geometry = new THREE.RingGeometry(0.78, 0.92, 24);
+    const material = new THREE.MeshBasicMaterial({
+      color:
+        node.collision?.state === "localOnly" ? 0xd3ad69 : 0xb16f6f,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.8,
+    });
+    const ring = new THREE.Mesh(geometry, material);
+    ring.position.z = -0.72;
+    ring.userData.collisionRelationshipOnly = true;
+    return ring;
   }
 
   function buildNodeProxy(node: SceneNodeReport): THREE.Group {
@@ -162,17 +311,7 @@
     }
 
     if (node.collision) {
-      const ringGeometry = new THREE.RingGeometry(0.78, 0.92, 24);
-      const ringMaterial = new THREE.MeshBasicMaterial({
-        color:
-          node.collision.state === "localOnly" ? 0xd3ad69 : 0xb16f6f,
-        side: THREE.DoubleSide,
-        transparent: true,
-        opacity: 0.8,
-      });
-      const ring = new THREE.Mesh(ringGeometry, ringMaterial);
-      ring.position.z = -0.72;
-      group.add(ring);
+      group.add(buildCollisionRelationshipMarker(node));
     }
 
     group.position.fromArray(transform.translation);
@@ -288,26 +427,30 @@
     controls.update();
   }
 
+  function disposeObject(root: THREE.Object3D) {
+    root.traverse((object) => {
+      const renderable = object as THREE.Mesh | THREE.LineSegments;
+      if ("geometry" in renderable && renderable.geometry) {
+        renderable.geometry.dispose();
+      }
+
+      if ("material" in renderable && renderable.material) {
+        const materials = Array.isArray(renderable.material)
+          ? renderable.material
+          : [renderable.material];
+        for (const material of materials) {
+          material.dispose();
+        }
+      }
+    });
+  }
+
   function clearGroup(group: THREE.Group) {
     const children = [...group.children];
     group.clear();
 
     for (const child of children) {
-      child.traverse((object) => {
-        const renderable = object as THREE.Mesh | THREE.LineSegments;
-        if ("geometry" in renderable && renderable.geometry) {
-          renderable.geometry.dispose();
-        }
-
-        if ("material" in renderable && renderable.material) {
-          const materials = Array.isArray(renderable.material)
-            ? renderable.material
-            : [renderable.material];
-          for (const material of materials) {
-            material.dispose();
-          }
-        }
-      });
+      disposeObject(child);
     }
   }
 
@@ -379,6 +522,8 @@
       <p class="label">Scene proxies</p>
       <div class="meta-line">
         <span>{placedNodes} placed</span>
+        <span>{realGeometryNodes}/{REAL_GEOMETRY_NODE_LIMIT} real geometry</span>
+        <span>{fallbackProxyNodes} proxy fallback</span>
         <span>{unplacedNodes} without transform</span>
         {#if selectedNodeIndex !== null}
           <span>selected #{selectedNodeIndex}</span>
@@ -387,7 +532,7 @@
     </div>
 
     <span class="hint">
-      Click node · orbit/zoom/pan · proxy size is symbolic when core scale is absent
+      Click node · orbit/zoom/pan · YBN remains local-only without collision placement evidence
     </span>
   </div>
 
