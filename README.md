@@ -28,7 +28,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Current status
 
-The repository currently provides the desktop application shell, native workspace directory selection, GTA V Legacy/FiveM discovery, and direct engine-backed asset inspection, capability discovery, and bounded YDR/YDD/YBN preview commands through a typed frontend/native bridge. The workspace shell includes a native asset picker and an inspector that renders core metadata, operation availability, required parameters, and rejection reasons without duplicating format policy in TypeScript.
+The repository currently provides the desktop application shell, native workspace directory selection, GTA V Legacy/FiveM discovery, and direct engine-backed asset inspection, capability discovery, and bounded YDR/YDD/YBN preview commands through a typed frontend/native bridge. The workspace shell includes a native asset picker, capability inspector, and an interactive Three.js viewport that renders only normalized preview data returned by the Rust core. YDD preview requires an explicit drawable index, and preview truncation/local-only metadata remains visible in the UI.
 
 The Rust adapter is reproducibly pinned to RageLab core revision `15db923f11ab87737984c93f97e486b766bd4959`. Studio builds do not depend on a local RageLab checkout.
 

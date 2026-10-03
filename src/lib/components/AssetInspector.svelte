@@ -1,17 +1,39 @@
 <script lang="ts">
+  import PreviewViewport from "$lib/components/PreviewViewport.svelte";
   import {
     chooseAssetFile,
     getAssetCapabilities,
     inspectAsset,
+    previewAsset,
     type AssetCapabilitiesReport,
     type AssetInspectionReport,
     type AssetOperationAvailability,
+    type AssetOperationCapability,
+    type AssetPreviewReport,
+    type CorePreviewOptions,
   } from "$lib/native";
 
   let inspection: AssetInspectionReport | null = null;
   let capabilities: AssetCapabilitiesReport | null = null;
   let loading = false;
   let errorMessage = "";
+
+  let previewReport: AssetPreviewReport | null = null;
+  let previewLoading = false;
+  let previewError = "";
+  let drawableIndex = "0";
+  let previewOperation: AssetOperationCapability | null = null;
+  let previewRequiresDrawableIndex = false;
+  let previewRunnable = false;
+
+  $: previewOperation =
+    capabilities?.operations.find((operation) => operation.id === "preview") ??
+    null;
+  $: previewRequiresDrawableIndex =
+    previewOperation?.requiresParameters.includes("drawableIndex") ?? false;
+  $: previewRunnable =
+    previewOperation?.availability === "available" ||
+    previewOperation?.availability === "parameterized";
 
   async function openAsset() {
     errorMessage = "";
@@ -31,6 +53,9 @@
     loading = true;
     inspection = null;
     capabilities = null;
+    previewReport = null;
+    previewError = "";
+    drawableIndex = "0";
 
     try {
       [inspection, capabilities] = await Promise.all([
@@ -46,6 +71,39 @@
       );
     } finally {
       loading = false;
+    }
+  }
+
+  async function loadPreview() {
+    if (!inspection || !previewOperation || !previewRunnable) {
+      return;
+    }
+
+    previewError = "";
+    previewLoading = true;
+    previewReport = null;
+
+    const options: CorePreviewOptions = {};
+
+    if (previewRequiresDrawableIndex) {
+      const selectedIndex = Number(drawableIndex);
+      if (!Number.isInteger(selectedIndex) || selectedIndex < 0) {
+        previewError = "drawableIndex must be a non-negative integer.";
+        previewLoading = false;
+        return;
+      }
+      options.drawableIndex = selectedIndex;
+    }
+
+    try {
+      previewReport = await previewAsset(inspection.path, options);
+    } catch (error) {
+      previewError = errorMessageFor(
+        error,
+        "RageLab core could not build a preview for this asset.",
+      );
+    } finally {
+      previewLoading = false;
     }
   }
 
@@ -139,6 +197,62 @@
       <summary>Structured metadata</summary>
       <pre>{JSON.stringify(inspection.details, null, 2)}</pre>
     </details>
+
+    {#if previewOperation}
+      <section class="preview-controls">
+        <div>
+          <p class="label">Preview capability</p>
+          <div class="preview-capability-line">
+            <code>{previewOperation.id}</code>
+            <span
+              class="availability"
+              data-availability={previewOperation.availability}
+            >
+              {availabilityLabel(previewOperation.availability)}
+            </span>
+          </div>
+
+          {#if previewOperation.reason}
+            <p class="preview-reason">{previewOperation.reason}</p>
+          {/if}
+        </div>
+
+        <div class="preview-actions">
+          {#if previewRequiresDrawableIndex}
+            <label class="selector-field">
+              <span>drawableIndex</span>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                bind:value={drawableIndex}
+                disabled={previewLoading}
+              />
+            </label>
+          {/if}
+
+          <button
+            class="preview-button"
+            type="button"
+            onclick={loadPreview}
+            disabled={!previewRunnable || previewLoading}
+          >
+            {previewLoading ? "Building preview…" : "Preview asset"}
+          </button>
+        </div>
+      </section>
+
+      {#if previewError}
+        <div class="preview-error" role="alert">
+          <strong>Preview failed</strong>
+          <span>{previewError}</span>
+        </div>
+      {/if}
+
+      {#if previewReport}
+        <PreviewViewport report={previewReport} />
+      {/if}
+    {/if}
 
     <div class="operations-heading">
       <div>
@@ -381,6 +495,91 @@
     line-height: 1.5;
   }
 
+  .preview-controls {
+    margin-top: 14px;
+    padding: 14px;
+    border: 1px solid #292e35;
+    border-radius: 9px;
+    background: #12151a;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+  }
+
+  .preview-capability-line {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+
+  .preview-reason {
+    max-width: 620px;
+    margin: 7px 0 0;
+    color: #858b95;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .preview-actions {
+    flex: none;
+    display: flex;
+    align-items: end;
+    gap: 8px;
+  }
+
+  .selector-field {
+    display: grid;
+    gap: 5px;
+    color: #7f8690;
+    font-size: 10px;
+  }
+
+  .selector-field input {
+    width: 92px;
+    border: 1px solid #343941;
+    border-radius: 6px;
+    padding: 8px 9px;
+    background: #0f1216;
+    color: #e5e7eb;
+    font: inherit;
+  }
+
+  .preview-button {
+    border: 1px solid #343941;
+    border-radius: 7px;
+    padding: 8px 11px;
+    background: #1a1e24;
+    color: #dce0e5;
+    font: inherit;
+    font-weight: 650;
+    cursor: pointer;
+  }
+
+  .preview-button:hover:not(:disabled) {
+    border-color: #4b525d;
+    background: #20252c;
+  }
+
+  .preview-button:disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+
+  .preview-error {
+    margin-top: 10px;
+    padding: 11px 13px;
+    border: 1px solid #493027;
+    border-radius: 8px;
+    background: #1c1411;
+    color: #d2a187;
+    font-size: 12px;
+  }
+
+  .preview-error strong {
+    margin-right: 8px;
+  }
+
   .operations-heading {
     margin-top: 28px;
     align-items: end;
@@ -469,8 +668,14 @@
 
   @media (max-width: 700px) {
     .heading,
-    .operations-heading {
+    .operations-heading,
+    .preview-controls {
       display: grid;
+    }
+
+    .preview-actions {
+      justify-content: start;
+      flex-wrap: wrap;
     }
 
     .summary-grid,

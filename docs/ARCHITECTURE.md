@@ -52,6 +52,8 @@ RageLab Rust APIs
 
 Filesystem access, GTA/FiveM discovery, asset inspection, capability discovery, bounded preview construction, workspace indexing, mutation planning, and write operations belong on the native side of this boundary. Tauri commands should be thin wrappers that serialize core reports; they must not reinterpret format metadata, writer eligibility, preview hard caps, or discovery evidence.
 
+Three.js is responsible only for visualizing `AssetPreviewReport` data. It may choose camera, lighting, materials, wireframes, and interaction behavior, but it must not reopen assets, derive writer eligibility, expand omitted geometry, or reinterpret a truncated/local-only preview as complete world-space data. YDD drawable selection is passed explicitly back to the core before rendering.
+
 ## Repository independence
 
 RageLab Studio must build from its own repository. It must not depend on local paths to development clones or private workspaces. The committed core dependency uses the public RageLab Git repository pinned to an exact commit revision; `StudioInfo.coreRevision` exposes that revision to the desktop shell. Development against unreleased RageLab code may use a documented local override, but that override must never be committed.
