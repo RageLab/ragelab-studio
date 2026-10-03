@@ -18,6 +18,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
+ragelab-engine = { git = "https://github.com/RageLab/ragelab.git", rev = "15db923f11ab87737984c93f97e486b766bd4959" }
 
 [profile.release]
 codegen-units = 1

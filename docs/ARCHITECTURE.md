@@ -13,7 +13,10 @@ The core repository owns:
 - workspace indexing;
 - dependency resolution;
 - export policy and validation;
-- machine-readable capabilities and operation contracts.
+- machine-readable capabilities and operation contracts;
+- asset type detection, inspection, validation, and per-file capabilities;
+- bounded renderer-neutral YDR/YDD/YBN preview policy;
+- GTA V Legacy and FiveM environment discovery.
 
 ### RageLab Studio
 
@@ -47,8 +50,8 @@ Tauri commands
 RageLab Rust APIs
 ```
 
-Filesystem access, GTA installation discovery, workspace indexing, mutation planning, and write operations belong on the native side of this boundary.
+Filesystem access, GTA/FiveM discovery, asset inspection, capability discovery, bounded preview construction, workspace indexing, mutation planning, and write operations belong on the native side of this boundary. Tauri commands should be thin wrappers that serialize core reports; they must not reinterpret format metadata, writer eligibility, preview hard caps, or discovery evidence.
 
 ## Repository independence
 
-RageLab Studio must build from its own repository. It must not depend on local paths to development clones or private workspaces. Development against unreleased RageLab code should use explicit versioned Git dependencies or a documented local override that is never committed.
+RageLab Studio must build from its own repository. It must not depend on local paths to development clones or private workspaces. The committed core dependency uses the public RageLab Git repository pinned to an exact commit revision; `StudioInfo.coreRevision` exposes that revision to the desktop shell. Development against unreleased RageLab code may use a documented local override, but that override must never be committed.

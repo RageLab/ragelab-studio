@@ -28,7 +28,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Current status
 
-The repository currently provides the desktop application shell, native workspace directory selection, and a typed frontend/native bridge. Asset indexing and editor surfaces will be connected incrementally to the RageLab core.
+The repository currently provides the desktop application shell, native workspace directory selection, GTA V Legacy/FiveM discovery, and direct engine-backed asset inspection, capability discovery, and bounded YDR/YDD/YBN preview commands through a typed frontend/native bridge.
+
+The Rust adapter is reproducibly pinned to RageLab core revision `15db923f11ab87737984c93f97e486b766bd4959`. Studio builds do not depend on a local RageLab checkout.
 
 ## Development
 
@@ -64,6 +66,8 @@ bun run tauri dev
 - No dependency-resolution logic duplicated from RageLab.
 - Source assets are not overwritten implicitly.
 - Native filesystem access is exposed through narrow desktop commands.
+- Asset inspection, capabilities, preview bounds, and GTA/FiveM discovery are delegated directly to `ragelab-engine`.
+- Core revisions are pinned by public Git commit; committed local path dependencies are not permitted.
 
 ## License
 

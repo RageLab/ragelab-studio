@@ -2,13 +2,20 @@
   import { onMount } from "svelte";
   import {
     chooseWorkspaceDirectory,
+    discoverFiveMLegacy,
+    discoverGtaLegacy,
     getStudioInfo,
+    type FiveMDiscoveryReport,
+    type GtaVDiscoveryReport,
     type StudioInfo,
   } from "$lib/native";
 
   let studioInfo: StudioInfo | null = null;
+  let gtaDiscovery: GtaVDiscoveryReport | null = null;
+  let fivemDiscovery: FiveMDiscoveryReport | null = null;
   let workspacePath: string | null = null;
   let statusMessage = "";
+  let environmentLoading = false;
 
   onMount(async () => {
     try {
@@ -26,6 +33,25 @@
     } catch (error) {
       statusMessage =
         error instanceof Error ? error.message : "Unable to open workspace.";
+    }
+  }
+
+  async function discoverEnvironment() {
+    statusMessage = "";
+    environmentLoading = true;
+
+    try {
+      [gtaDiscovery, fivemDiscovery] = await Promise.all([
+        discoverGtaLegacy(),
+        discoverFiveMLegacy(),
+      ]);
+    } catch (error) {
+      statusMessage =
+        error instanceof Error
+          ? error.message
+          : "Unable to detect the local RageLab environment.";
+    } finally {
+      environmentLoading = false;
     }
   }
 </script>
@@ -56,7 +82,12 @@
     </nav>
 
     <div class="version">
-      {studioInfo ? studioInfo.product + " " + studioInfo.version : "RageLab Studio"}
+      {#if studioInfo}
+        <span>{studioInfo.product} {studioInfo.version}</span>
+        <span>core {studioInfo.coreRevision.slice(0, 7)}</span>
+      {:else}
+        <span>RageLab Studio</span>
+      {/if}
     </div>
   </aside>
 
@@ -71,9 +102,20 @@
         </p>
       </div>
 
-      <button class="primary" type="button" onclick={openWorkspace}>
-        Open workspace
-      </button>
+      <div class="header-actions">
+        <button
+          class="secondary"
+          type="button"
+          onclick={discoverEnvironment}
+          disabled={environmentLoading}
+        >
+          {environmentLoading ? "Detecting…" : "Detect environment"}
+        </button>
+
+        <button class="primary" type="button" onclick={openWorkspace}>
+          Open workspace
+        </button>
+      </div>
     </header>
 
     <section class="panel" aria-live="polite">
@@ -95,6 +137,48 @@
       {#if statusMessage}
         <p class="status">{statusMessage}</p>
       {/if}
+    </section>
+
+    <section class="environment" aria-live="polite">
+      <div class="environment-heading">
+        <div>
+          <p class="label">Native environment</p>
+          <h2>Legacy discovery</h2>
+        </div>
+        <p class="detail">
+          Results come directly from the pinned RageLab Rust core.
+        </p>
+      </div>
+
+      <div class="environment-grid">
+        <article class="environment-card">
+          <span class="environment-name">GTA V Legacy</span>
+          {#if gtaDiscovery}
+            <strong>{gtaDiscovery.validLegacyInstallations}</strong>
+            <span class="metric-label">validated installation(s)</span>
+            <span class="card-detail">
+              {gtaDiscovery.candidates.length} candidate(s) inspected
+            </span>
+          {:else}
+            <strong>—</strong>
+            <span class="metric-label">not scanned</span>
+          {/if}
+        </article>
+
+        <article class="environment-card">
+          <span class="environment-name">FiveM</span>
+          {#if fivemDiscovery}
+            <strong>{fivemDiscovery.validInstallations}</strong>
+            <span class="metric-label">validated installation(s)</span>
+            <span class="card-detail">
+              {fivemDiscovery.legacyLinkedInstallations} linked to Legacy
+            </span>
+          {:else}
+            <strong>—</strong>
+            <span class="metric-label">not scanned</span>
+          {/if}
+        </article>
+      </div>
     </section>
   </section>
 </main>
@@ -206,6 +290,8 @@
     padding: 0 10px;
     color: #666c75;
     font-size: 11px;
+    display: grid;
+    gap: 3px;
   }
 
   .content {
@@ -245,20 +331,46 @@
     line-height: 1.65;
   }
 
-  .primary {
+  .header-actions {
     flex: none;
     margin-top: 26px;
-    border: 1px solid #d9dce1;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+
+  .primary,
+  .secondary {
     border-radius: 7px;
     padding: 10px 14px;
-    background: #f4f4f5;
-    color: #111318;
     font-weight: 650;
     cursor: pointer;
   }
 
+  .primary {
+    border: 1px solid #d9dce1;
+    background: #f4f4f5;
+    color: #111318;
+  }
+
   .primary:hover {
     background: #ffffff;
+  }
+
+  .secondary {
+    border: 1px solid #343941;
+    background: #171a1f;
+    color: #d9dce1;
+  }
+
+  .secondary:hover:not(:disabled) {
+    border-color: #4a505a;
+    background: #1d2026;
+  }
+
+  .secondary:disabled {
+    cursor: default;
+    opacity: 0.55;
   }
 
   .panel {
@@ -304,6 +416,68 @@
     font-size: 13px;
   }
 
+  .environment {
+    margin-top: 18px;
+    padding: 24px;
+    border: 1px solid #25292f;
+    border-radius: 12px;
+    background: rgba(17, 20, 24, 0.55);
+  }
+
+  .environment-heading {
+    display: flex;
+    justify-content: space-between;
+    gap: 28px;
+    align-items: flex-start;
+    margin-bottom: 20px;
+  }
+
+  .environment-heading h2 {
+    margin: 0;
+    font-size: 20px;
+    letter-spacing: -0.02em;
+  }
+
+  .environment-heading .detail {
+    margin: 0;
+    text-align: right;
+  }
+
+  .environment-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .environment-card {
+    min-height: 132px;
+    padding: 18px;
+    border: 1px solid #272b32;
+    border-radius: 9px;
+    background: #14171b;
+    display: grid;
+    align-content: start;
+    gap: 5px;
+  }
+
+  .environment-name,
+  .metric-label,
+  .card-detail {
+    color: #7f8690;
+    font-size: 12px;
+  }
+
+  .environment-card strong {
+    margin-top: 8px;
+    font-size: 30px;
+    line-height: 1;
+    letter-spacing: -0.035em;
+  }
+
+  .card-detail {
+    margin-top: 8px;
+  }
+
   @media (max-width: 760px) {
     .shell {
       grid-template-columns: 1fr;
@@ -329,8 +503,21 @@
       flex-direction: column;
     }
 
-    .primary {
+    .header-actions {
       margin-top: 0;
+      flex-wrap: wrap;
+    }
+
+    .environment-heading {
+      display: grid;
+    }
+
+    .environment-heading .detail {
+      text-align: left;
+    }
+
+    .environment-grid {
+      grid-template-columns: 1fr;
     }
   }
 </style>
