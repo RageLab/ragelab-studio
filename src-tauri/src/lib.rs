@@ -1,14 +1,18 @@
-use std::path::Path;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use ragelab_engine::{
     apply_operation_document, asset_capabilities, discover_fivem_legacy, discover_gta_v_legacy,
-    inspect_asset, plan_operation_document, preview_asset, AssetCapabilitiesReport,
-    AssetInspectionReport, AssetPreviewReport, FiveMDiscoveryReport, GtaVDiscoveryReport,
-    OperationApplyResult, OperationDocument, OperationPlan, PreviewOptions,
+    inspect_asset, plan_operation_document, preview_asset, workspace_scene_report,
+    AssetCapabilitiesReport, AssetInspectionReport, AssetPreviewReport, FiveMDiscoveryReport,
+    GtaVDiscoveryReport, OperationApplyResult, OperationDocument, OperationPlan, PreviewOptions,
+    SceneAssemblyOptions, SceneManifestReport, MAX_SCENE_NODE_LIMIT,
 };
 use serde::{Deserialize, Serialize};
 
-const RAGELAB_CORE_REVISION: &str = "15db923f11ab87737984c93f97e486b766bd4959";
+const RAGELAB_CORE_REVISION: &str = "2bea1e6406b41f125061776a4a66bb92f57d8b8f";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -16,6 +20,14 @@ struct StudioInfo {
     product: &'static str,
     version: &'static str,
     core_revision: &'static str,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceSceneRequest {
+    workspace: String,
+    ymap: String,
+    max_nodes: Option<usize>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -98,6 +110,67 @@ fn core_asset_preview(request: PreviewRequest) -> Result<AssetPreviewReport, Str
 }
 
 #[tauri::command]
+fn core_workspace_scene(request: WorkspaceSceneRequest) -> Result<SceneManifestReport, String> {
+    let (workspace, ymap, options) = validate_workspace_scene_request(&request)?;
+    workspace_scene_report(&workspace, &ymap, options).map_err(core_error)
+}
+
+fn validate_workspace_scene_request(
+    request: &WorkspaceSceneRequest,
+) -> Result<(PathBuf, PathBuf, SceneAssemblyOptions), String> {
+    let workspace = PathBuf::from(&request.workspace);
+    let ymap = PathBuf::from(&request.ymap);
+
+    if !workspace.is_absolute() {
+        return Err("Studio scene workspace must be an absolute path".into());
+    }
+    if !ymap.is_absolute() {
+        return Err("Studio scene YMAP must be an absolute path".into());
+    }
+    if !workspace.is_dir() {
+        return Err(format!(
+            "Studio scene workspace is not a directory: {}",
+            workspace.display()
+        ));
+    }
+    if !ymap.is_file() {
+        return Err(format!(
+            "Studio scene YMAP is not a file: {}",
+            ymap.display()
+        ));
+    }
+    if !ymap
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("ymap"))
+    {
+        return Err("Studio scene input must use the .ymap extension".into());
+    }
+
+    let max_nodes = request
+        .max_nodes
+        .unwrap_or_else(|| SceneAssemblyOptions::default().max_nodes);
+    if max_nodes == 0 {
+        return Err("Studio scene maxNodes must be greater than zero".into());
+    }
+    if max_nodes > MAX_SCENE_NODE_LIMIT {
+        return Err(format!(
+            "Studio scene maxNodes exceeds hard limit {MAX_SCENE_NODE_LIMIT}"
+        ));
+    }
+
+    let canonical_workspace = fs::canonicalize(&workspace)
+        .map_err(|error| format!("Unable to canonicalize Studio workspace: {error}"))?;
+    let canonical_ymap = fs::canonicalize(&ymap)
+        .map_err(|error| format!("Unable to canonicalize Studio YMAP: {error}"))?;
+    if !canonical_ymap.starts_with(&canonical_workspace) {
+        return Err("Studio scene YMAP must be contained by the selected workspace".into());
+    }
+
+    Ok((workspace, ymap, SceneAssemblyOptions::new(max_nodes)))
+}
+
+#[tauri::command]
 fn core_operation_plan(document: OperationDocument) -> Result<OperationPlan, String> {
     ensure_studio_operation_paths(&document)?;
     plan_operation_document(&document, Path::new(".")).map_err(core_error)
@@ -152,6 +225,7 @@ pub fn run() {
             core_asset_inspect,
             core_asset_capabilities,
             core_asset_preview,
+            core_workspace_scene,
             core_operation_plan,
             core_operation_apply
         ])
@@ -184,6 +258,58 @@ mod tests {
     fn studio_info_exposes_pinned_core_revision() {
         let info = studio_info();
         assert_eq!(info.core_revision, RAGELAB_CORE_REVISION);
+    }
+
+    #[test]
+    fn workspace_scene_request_enforces_absolute_contained_ymap_and_limits() {
+        let base =
+            std::env::temp_dir().join(format!("ragelab-studio-scene-{}", std::process::id()));
+        let workspace = base.join("workspace");
+        let inside = workspace.join("map.ymap");
+        let outside = base.join("outside.ymap");
+
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(&inside, b"fixture").unwrap();
+        fs::write(&outside, b"fixture").unwrap();
+
+        let valid = WorkspaceSceneRequest {
+            workspace: workspace.display().to_string(),
+            ymap: inside.display().to_string(),
+            max_nodes: Some(42),
+        };
+        let (_, _, options) = validate_workspace_scene_request(&valid).unwrap();
+        assert_eq!(options.max_nodes, 42);
+
+        let relative = WorkspaceSceneRequest {
+            workspace: "relative".into(),
+            ymap: "map.ymap".into(),
+            max_nodes: None,
+        };
+        assert!(validate_workspace_scene_request(&relative).is_err());
+
+        let outside_request = WorkspaceSceneRequest {
+            workspace: workspace.display().to_string(),
+            ymap: outside.display().to_string(),
+            max_nodes: None,
+        };
+        assert!(validate_workspace_scene_request(&outside_request).is_err());
+
+        let zero = WorkspaceSceneRequest {
+            workspace: workspace.display().to_string(),
+            ymap: inside.display().to_string(),
+            max_nodes: Some(0),
+        };
+        assert!(validate_workspace_scene_request(&zero).is_err());
+
+        let too_large = WorkspaceSceneRequest {
+            workspace: workspace.display().to_string(),
+            ymap: inside.display().to_string(),
+            max_nodes: Some(MAX_SCENE_NODE_LIMIT + 1),
+        };
+        assert!(validate_workspace_scene_request(&too_large).is_err());
+
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[test]

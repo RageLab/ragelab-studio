@@ -176,6 +176,91 @@ export interface CorePreviewOptions {
   maxMaterials?: number;
 }
 
+export type SceneResolutionState = "resolved" | "unresolved";
+
+export type SceneResolutionReasonCode =
+  | "providerMissing"
+  | "providerAmbiguous"
+  | "assetNameMissing"
+  | "drawableDictionaryMissing"
+  | "assetMissing"
+  | "assetAmbiguous"
+  | "dictionaryUnreadable"
+  | "dictionaryEntryMissing"
+  | "unsupportedAssetRelation"
+  | "invalidWorldTransform";
+
+export type SceneCollisionState = "localOnly" | "unresolved";
+
+export interface SceneTransformReport {
+  translation: [number, number, number];
+  rotation: [number, number, number, number];
+  scale: [number, number, number] | null;
+}
+
+export interface SceneResolutionReasonReport {
+  code: SceneResolutionReasonCode;
+  message: string;
+}
+
+export interface SceneCollisionRelationshipReport {
+  hash: string;
+  assetRef: number | null;
+  state: SceneCollisionState;
+  reason: string;
+}
+
+export interface SceneNodeReport {
+  index: number;
+  sourceYmap: string;
+  entityIndex: number;
+  archetypeHash: string;
+  providerPath: string | null;
+  assetRef: number | null;
+  assetKind: string | null;
+  transform: SceneTransformReport | null;
+  resolution: SceneResolutionState;
+  reason: SceneResolutionReasonReport | null;
+  collision: SceneCollisionRelationshipReport | null;
+}
+
+export interface SceneAssetSelectorReport {
+  type: "yddDrawable";
+  index: number;
+  nameHash: string;
+  name: string | null;
+}
+
+export interface SceneAssetReferenceReport {
+  id: number;
+  kind: string;
+  hash: string;
+  path: string;
+  selector: SceneAssetSelectorReport | null;
+}
+
+export interface SceneManifestReport {
+  schemaVersion: number;
+  root: {
+    path: string;
+    nameHash: string | null;
+  };
+  nodes: SceneNodeReport[];
+  assets: SceneAssetReferenceReport[];
+  summary: {
+    totalEntities: number;
+    emittedNodes: number;
+    resolvedNodes: number;
+    unresolvedNodes: number;
+    assetReferences: number;
+  };
+  warnings: string[];
+  limits: {
+    maxNodes: number;
+    truncated: boolean;
+    omittedEntities: number;
+  };
+}
 
 export interface OperationSpec {
   type: string;
@@ -259,6 +344,20 @@ export function previewAsset(
     request: {
       path,
       ...options,
+    },
+  });
+}
+
+export function assembleWorkspaceScene(
+  workspace: string,
+  ymap: string,
+  maxNodes?: number,
+): Promise<SceneManifestReport> {
+  return invoke<SceneManifestReport>("core_workspace_scene", {
+    request: {
+      workspace,
+      ymap,
+      maxNodes,
     },
   });
 }

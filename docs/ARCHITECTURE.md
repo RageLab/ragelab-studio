@@ -16,7 +16,8 @@ The core repository owns:
 - machine-readable capabilities and operation contracts;
 - asset type detection, inspection, validation, and per-file capabilities;
 - bounded renderer-neutral YDR/YDD/YBN preview policy;
-- GTA V Legacy and FiveM environment discovery.
+- GTA V Legacy and FiveM environment discovery;
+- YMAP workspace scene assembly and serialized `SceneManifestReport` contracts.
 
 ### RageLab Studio
 
@@ -50,7 +51,7 @@ Tauri commands
 RageLab Rust APIs
 ```
 
-Filesystem access, GTA/FiveM discovery, asset inspection, capability discovery, bounded preview construction, workspace indexing, mutation planning, and write operations belong on the native side of this boundary. Tauri commands should be thin wrappers that serialize core reports; they must not reinterpret format metadata, writer eligibility, preview hard caps, or discovery evidence.
+Filesystem access, GTA/FiveM discovery, asset inspection, capability discovery, bounded preview construction, workspace indexing, YMAP scene assembly, mutation planning, and write operations belong on the native side of this boundary. Tauri commands should be thin wrappers that serialize core reports; they must not reinterpret format metadata, scene resolution states/transforms, writer eligibility, preview hard caps, or discovery evidence.
 
 Three.js is responsible only for visualizing `AssetPreviewReport` data. It may choose camera, lighting, materials, wireframes, and interaction behavior, but it must not reopen assets, derive writer eligibility, expand omitted geometry, or reinterpret a truncated/local-only preview as complete world-space data. YDD drawable selection is passed explicitly back to the core before rendering.
 
