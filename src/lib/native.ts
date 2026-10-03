@@ -262,6 +262,97 @@ export interface SceneManifestReport {
   };
 }
 
+
+export interface WorkspaceExportPreflightReport {
+  workspace: string;
+  selectedRoots: string[];
+  closureYmaps: string[];
+  predictedFiles: string[];
+  unresolved: {
+    raw: number;
+    vanilla: number;
+    unknown: number;
+    catalogUsed: boolean;
+    durtyfreeUsed: boolean;
+    fileCatalogUsed: boolean;
+  };
+  exportGate: {
+    allowedWithoutOverride: boolean;
+    requiresAllowUnresolved: boolean;
+  };
+  unknownGroups: Array<{
+    kind: string;
+    hash: string;
+    uses: number;
+    reasons: string[];
+    affectedMaps: string[];
+  }>;
+  mloAudits: Array<{
+    archetypeHash: string;
+    ytyp: string;
+    entities: number;
+    uniqueEntityArchetypes: number;
+    rooms: number;
+    portals: number;
+    localFiles: number;
+    vanilla: number;
+    unknown: number;
+    risk: string;
+  }>;
+  warnings: string[];
+}
+
+export interface WorkspaceExportReport {
+  workspace: string;
+  resourceName: string;
+  selectedRoots: string[];
+  output: {
+    resource: string;
+    stream: string;
+    manifest: string;
+    metadata: string;
+    gtxd: string | null;
+    copiedFiles: string[];
+    manifestMaps: number;
+  };
+  unresolved: {
+    raw: number;
+    vanilla: number;
+    unknown: number;
+    catalogUsed: boolean;
+    durtyfreeUsed: boolean;
+    fileCatalogUsed: boolean;
+    allowUnresolved: boolean;
+  };
+  validation: {
+    status: string;
+    valid: boolean;
+    metadataPresent: boolean;
+    manifestValid: boolean;
+    fxmanifestPresent: boolean;
+    selectedRoots: number;
+    closureMaps: number;
+    copiedFiles: number;
+    interiorMaps: number;
+    interiorBounds: number;
+    localMissing: string[];
+    postExportRawUnresolved: number;
+    postExportVanilla: number;
+    postExportUnknown: number;
+    warnings: string[];
+    errors: string[];
+  };
+  warnings: string[];
+}
+
+export interface WorkspaceExportRequest {
+  workspace: string;
+  maps: string[];
+  output: string;
+  resourceName: string;
+  allowUnresolved: boolean;
+}
+
 export interface OperationSpec {
   type: string;
   [key: string]: unknown;
@@ -360,6 +451,27 @@ export function assembleWorkspaceScene(
       maxNodes,
     },
   });
+}
+
+export function preflightWorkspaceExport(
+  workspace: string,
+  maps: string[],
+): Promise<WorkspaceExportPreflightReport> {
+  return invoke<WorkspaceExportPreflightReport>(
+    "core_workspace_export_preflight",
+    {
+      request: {
+        workspace,
+        maps,
+      },
+    },
+  );
+}
+
+export function exportWorkspace(
+  request: WorkspaceExportRequest,
+): Promise<WorkspaceExportReport> {
+  return invoke<WorkspaceExportReport>("core_workspace_export", { request });
 }
 
 export function planOperation(

@@ -5,14 +5,16 @@ use std::{
 
 use ragelab_engine::{
     apply_operation_document, asset_capabilities, discover_fivem_legacy, discover_gta_v_legacy,
-    inspect_asset, plan_operation_document, preview_asset, workspace_scene_report,
-    AssetCapabilitiesReport, AssetInspectionReport, AssetPreviewReport, FiveMDiscoveryReport,
+    inspect_asset, plan_operation_document, preview_asset, workspace_export_preflight_report,
+    workspace_export_report, workspace_scene_report, AssetCapabilitiesReport,
+    AssetInspectionReport, AssetPreviewReport, CatalogRefs, FiveMDiscoveryReport,
     GtaVDiscoveryReport, OperationApplyResult, OperationDocument, OperationPlan, PreviewOptions,
-    SceneAssemblyOptions, SceneManifestReport, MAX_SCENE_NODE_LIMIT,
+    SceneAssemblyOptions, SceneManifestReport, SharedExportOptions, WorkspaceExportPreflightReport,
+    WorkspaceExportReport, MAX_SCENE_NODE_LIMIT,
 };
 use serde::{Deserialize, Serialize};
 
-const RAGELAB_CORE_REVISION: &str = "ba5f7a64a89de3fb8e9e2acd59e0f086b093c00b";
+const RAGELAB_CORE_REVISION: &str = "c8264587a4daf864b8d3f1b88727f53cab942573";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,6 +30,23 @@ struct WorkspaceSceneRequest {
     workspace: String,
     ymap: String,
     max_nodes: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceExportPreflightRequest {
+    workspace: String,
+    maps: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceExportRequest {
+    workspace: String,
+    maps: Vec<String>,
+    output: String,
+    resource_name: String,
+    allow_unresolved: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -171,6 +190,103 @@ fn validate_workspace_scene_request(
 }
 
 #[tauri::command]
+fn core_workspace_export_preflight(
+    request: WorkspaceExportPreflightRequest,
+) -> Result<WorkspaceExportPreflightReport, String> {
+    let (workspace, maps) = validate_workspace_export_selection(&request.workspace, &request.maps)?;
+    workspace_export_preflight_report(&workspace, &maps, CatalogRefs::default()).map_err(core_error)
+}
+
+#[tauri::command]
+fn core_workspace_export(request: WorkspaceExportRequest) -> Result<WorkspaceExportReport, String> {
+    let (workspace, maps) = validate_workspace_export_selection(&request.workspace, &request.maps)?;
+    let output = validate_workspace_export_output(&workspace, &request.output)?;
+    let resource_name = request.resource_name.trim();
+    if resource_name.is_empty() {
+        return Err("Studio export resourceName must not be empty".into());
+    }
+
+    workspace_export_report(
+        &workspace,
+        &maps,
+        &output,
+        resource_name,
+        SharedExportOptions {
+            allow_unresolved: request.allow_unresolved,
+            overwrite: false,
+        },
+        CatalogRefs::default(),
+    )
+    .map_err(core_error)
+}
+
+fn validate_workspace_export_selection(
+    workspace: &str,
+    maps: &[String],
+) -> Result<(PathBuf, Vec<PathBuf>), String> {
+    let workspace = PathBuf::from(workspace);
+    if !workspace.is_absolute() {
+        return Err("Studio export workspace must be an absolute path".into());
+    }
+    if !workspace.is_dir() {
+        return Err(format!(
+            "Studio export workspace is not a directory: {}",
+            workspace.display()
+        ));
+    }
+    if maps.is_empty() {
+        return Err("Studio export requires at least one YMAP".into());
+    }
+
+    let mut map_paths = Vec::with_capacity(maps.len());
+    for map in maps {
+        if map.trim().is_empty() {
+            return Err("Studio export YMAP path must not be empty".into());
+        }
+        map_paths.push(PathBuf::from(map));
+    }
+
+    Ok((workspace, map_paths))
+}
+
+fn validate_workspace_export_output(workspace: &Path, output: &str) -> Result<PathBuf, String> {
+    let output = PathBuf::from(output);
+    if !output.is_absolute() {
+        return Err("Studio export output must be an absolute path".into());
+    }
+    if output.exists() {
+        return Err(format!(
+            "Studio export output must not already exist: {}",
+            output.display()
+        ));
+    }
+
+    let file_name = output
+        .file_name()
+        .ok_or_else(|| "Studio export output must name a resource directory".to_string())?;
+    let parent = output
+        .parent()
+        .ok_or_else(|| "Studio export output must have a parent directory".to_string())?;
+    if !parent.is_dir() {
+        return Err(format!(
+            "Studio export output parent is not a directory: {}",
+            parent.display()
+        ));
+    }
+
+    let canonical_workspace = fs::canonicalize(workspace)
+        .map_err(|error| format!("Unable to canonicalize Studio workspace: {error}"))?;
+    let canonical_parent = fs::canonicalize(parent)
+        .map_err(|error| format!("Unable to canonicalize Studio export parent: {error}"))?;
+    let canonical_output = canonical_parent.join(file_name);
+    if canonical_output.starts_with(&canonical_workspace) {
+        return Err("Studio export output must be outside the source workspace".into());
+    }
+
+    Ok(output)
+}
+
+#[tauri::command]
 fn core_operation_plan(document: OperationDocument) -> Result<OperationPlan, String> {
     ensure_studio_operation_paths(&document)?;
     plan_operation_document(&document, Path::new(".")).map_err(core_error)
@@ -226,6 +342,8 @@ pub fn run() {
             core_asset_capabilities,
             core_asset_preview,
             core_workspace_scene,
+            core_workspace_export_preflight,
+            core_workspace_export,
             core_operation_plan,
             core_operation_apply
         ])
@@ -308,6 +426,52 @@ mod tests {
             max_nodes: Some(MAX_SCENE_NODE_LIMIT + 1),
         };
         assert!(validate_workspace_scene_request(&too_large).is_err());
+
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn workspace_export_request_enforces_selection_and_create_new_output() {
+        let base =
+            std::env::temp_dir().join(format!("ragelab-studio-export-{}", std::process::id()));
+        let workspace = base.join("workspace");
+        let map = workspace.join("map.ymap");
+        let outside_output = base.join("resource-output");
+        let inside_output = workspace.join("resource-output");
+
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(&map, b"fixture").unwrap();
+
+        let (_, maps) = validate_workspace_export_selection(
+            &workspace.display().to_string(),
+            &[map.display().to_string()],
+        )
+        .unwrap();
+        assert_eq!(maps, vec![map.clone()]);
+
+        assert!(validate_workspace_export_selection("relative", &[]).is_err());
+        assert!(
+            validate_workspace_export_selection(&workspace.display().to_string(), &[]).is_err()
+        );
+
+        let valid_output =
+            validate_workspace_export_output(&workspace, &outside_output.display().to_string())
+                .unwrap();
+        assert_eq!(valid_output, outside_output);
+
+        assert!(
+            validate_workspace_export_output(&workspace, &inside_output.display().to_string())
+                .is_err()
+        );
+        assert!(validate_workspace_export_output(&workspace, "relative-output").is_err());
+
+        fs::create_dir_all(&outside_output).unwrap();
+        assert!(validate_workspace_export_output(
+            &workspace,
+            &outside_output.display().to_string()
+        )
+        .is_err());
 
         fs::remove_dir_all(base).unwrap();
     }
