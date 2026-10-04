@@ -9,6 +9,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "aes"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b169f7a6d4742236a0a00c541b845991d0ac43e546831af1249753ab4c3aa3a0"
+dependencies = [
+ "cfg-if",
+ "cipher",
+ "cpufeatures",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -326,6 +337,16 @@ dependencies = [
  "num-traits",
  "serde",
  "windows-link",
+]
+
+[[package]]
+name = "cipher"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "773f3b9af64447d2ce9850330c473515014aa235e6a783b02db81ff39e4a3dad"
+dependencies = [
+ "crypto-common",
+ "inout",
 ]
 
 [[package]]
@@ -1472,6 +1493,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "inout"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "879f10e63c20629ecabbb64a8010319738c66a5cd0c29b02d63d272b03751d01"
+dependencies = [
+ "generic-array",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2379,13 +2409,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
+name = "rage-rpf"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5b183e5775f8a42781a2d11b4e23642ed54ef829a4bb7710bfb1d0b7499f7379"
+dependencies = [
+ "aes",
+ "anyhow",
+ "cipher",
+ "flate2",
+ "sha1",
+]
+
+[[package]]
 name = "ragelab-assets"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=c8264587a4daf864b8d3f1b88727f53cab942573#c8264587a4daf864b8d3f1b88727f53cab942573"
+source = "git+https://github.com/RageLab/ragelab.git?rev=7089e92d669a072ca821e6887b0d3450b7a1a03b#7089e92d669a072ca821e6887b0d3450b7a1a03b"
 dependencies = [
  "ragelab-hash",
  "ragelab-meta",
  "ragelab-rbf",
+ "ragelab-rpf",
  "ragelab-ydd",
  "ragelab-ymap",
  "ragelab-ymf",
@@ -2395,7 +2439,7 @@ dependencies = [
 [[package]]
 name = "ragelab-engine"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=c8264587a4daf864b8d3f1b88727f53cab942573#c8264587a4daf864b8d3f1b88727f53cab942573"
+source = "git+https://github.com/RageLab/ragelab.git?rev=7089e92d669a072ca821e6887b0d3450b7a1a03b#7089e92d669a072ca821e6887b0d3450b7a1a03b"
 dependencies = [
  "ragelab-assets",
  "ragelab-hash",
@@ -2415,12 +2459,12 @@ dependencies = [
 [[package]]
 name = "ragelab-hash"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=c8264587a4daf864b8d3f1b88727f53cab942573#c8264587a4daf864b8d3f1b88727f53cab942573"
+source = "git+https://github.com/RageLab/ragelab.git?rev=7089e92d669a072ca821e6887b0d3450b7a1a03b#7089e92d669a072ca821e6887b0d3450b7a1a03b"
 
 [[package]]
 name = "ragelab-meta"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=c8264587a4daf864b8d3f1b88727f53cab942573#c8264587a4daf864b8d3f1b88727f53cab942573"
+source = "git+https://github.com/RageLab/ragelab.git?rev=7089e92d669a072ca821e6887b0d3450b7a1a03b#7089e92d669a072ca821e6887b0d3450b7a1a03b"
 dependencies = [
  "ragelab-resource",
 ]
@@ -2428,19 +2472,28 @@ dependencies = [
 [[package]]
 name = "ragelab-pso"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=c8264587a4daf864b8d3f1b88727f53cab942573#c8264587a4daf864b8d3f1b88727f53cab942573"
+source = "git+https://github.com/RageLab/ragelab.git?rev=7089e92d669a072ca821e6887b0d3450b7a1a03b#7089e92d669a072ca821e6887b0d3450b7a1a03b"
 
 [[package]]
 name = "ragelab-rbf"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=c8264587a4daf864b8d3f1b88727f53cab942573#c8264587a4daf864b8d3f1b88727f53cab942573"
+source = "git+https://github.com/RageLab/ragelab.git?rev=7089e92d669a072ca821e6887b0d3450b7a1a03b#7089e92d669a072ca821e6887b0d3450b7a1a03b"
 
 [[package]]
 name = "ragelab-resource"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=c8264587a4daf864b8d3f1b88727f53cab942573#c8264587a4daf864b8d3f1b88727f53cab942573"
+source = "git+https://github.com/RageLab/ragelab.git?rev=7089e92d669a072ca821e6887b0d3450b7a1a03b#7089e92d669a072ca821e6887b0d3450b7a1a03b"
 dependencies = [
  "flate2",
+]
+
+[[package]]
+name = "ragelab-rpf"
+version = "0.1.0"
+source = "git+https://github.com/RageLab/ragelab.git?rev=7089e92d669a072ca821e6887b0d3450b7a1a03b#7089e92d669a072ca821e6887b0d3450b7a1a03b"
+dependencies = [
+ "flate2",
+ "rage-rpf",
 ]
 
 [[package]]
@@ -2457,7 +2510,7 @@ dependencies = [
 [[package]]
 name = "ragelab-ybn"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=c8264587a4daf864b8d3f1b88727f53cab942573#c8264587a4daf864b8d3f1b88727f53cab942573"
+source = "git+https://github.com/RageLab/ragelab.git?rev=7089e92d669a072ca821e6887b0d3450b7a1a03b#7089e92d669a072ca821e6887b0d3450b7a1a03b"
 dependencies = [
  "ragelab-resource",
 ]
@@ -2465,7 +2518,7 @@ dependencies = [
 [[package]]
 name = "ragelab-ydd"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=c8264587a4daf864b8d3f1b88727f53cab942573#c8264587a4daf864b8d3f1b88727f53cab942573"
+source = "git+https://github.com/RageLab/ragelab.git?rev=7089e92d669a072ca821e6887b0d3450b7a1a03b#7089e92d669a072ca821e6887b0d3450b7a1a03b"
 dependencies = [
  "ragelab-resource",
  "ragelab-ydr",
@@ -2474,7 +2527,7 @@ dependencies = [
 [[package]]
 name = "ragelab-ydr"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=c8264587a4daf864b8d3f1b88727f53cab942573#c8264587a4daf864b8d3f1b88727f53cab942573"
+source = "git+https://github.com/RageLab/ragelab.git?rev=7089e92d669a072ca821e6887b0d3450b7a1a03b#7089e92d669a072ca821e6887b0d3450b7a1a03b"
 dependencies = [
  "ragelab-resource",
  "ragelab-ytd",
@@ -2483,7 +2536,7 @@ dependencies = [
 [[package]]
 name = "ragelab-ymap"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=c8264587a4daf864b8d3f1b88727f53cab942573#c8264587a4daf864b8d3f1b88727f53cab942573"
+source = "git+https://github.com/RageLab/ragelab.git?rev=7089e92d669a072ca821e6887b0d3450b7a1a03b#7089e92d669a072ca821e6887b0d3450b7a1a03b"
 dependencies = [
  "ragelab-hash",
  "ragelab-meta",
@@ -2493,7 +2546,7 @@ dependencies = [
 [[package]]
 name = "ragelab-ymf"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=c8264587a4daf864b8d3f1b88727f53cab942573#c8264587a4daf864b8d3f1b88727f53cab942573"
+source = "git+https://github.com/RageLab/ragelab.git?rev=7089e92d669a072ca821e6887b0d3450b7a1a03b#7089e92d669a072ca821e6887b0d3450b7a1a03b"
 dependencies = [
  "ragelab-meta",
  "ragelab-pso",
@@ -2502,7 +2555,7 @@ dependencies = [
 [[package]]
 name = "ragelab-ytd"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=c8264587a4daf864b8d3f1b88727f53cab942573#c8264587a4daf864b8d3f1b88727f53cab942573"
+source = "git+https://github.com/RageLab/ragelab.git?rev=7089e92d669a072ca821e6887b0d3450b7a1a03b#7089e92d669a072ca821e6887b0d3450b7a1a03b"
 dependencies = [
  "ragelab-hash",
  "ragelab-resource",
@@ -2511,7 +2564,7 @@ dependencies = [
 [[package]]
 name = "ragelab-ytyp"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=c8264587a4daf864b8d3f1b88727f53cab942573#c8264587a4daf864b8d3f1b88727f53cab942573"
+source = "git+https://github.com/RageLab/ragelab.git?rev=7089e92d669a072ca821e6887b0d3450b7a1a03b#7089e92d669a072ca821e6887b0d3450b7a1a03b"
 dependencies = [
  "ragelab-hash",
  "ragelab-meta",
@@ -2923,6 +2976,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "170fb83ab34de17dc69aa7c67482b22218ddb85da56546f9bd6b929e32a05930"
 dependencies = [
  "stable_deref_trait",
+]
+
+[[package]]
+name = "sha1"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a978451301f4db1d02937a4ab3ccce137717b81826e79b7d49ffe3244a13c3b8"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
 ]
 
 [[package]]

@@ -6,15 +6,16 @@ use std::{
 use ragelab_engine::{
     apply_operation_document, asset_capabilities, discover_fivem_legacy, discover_gta_v_legacy,
     inspect_asset, plan_operation_document, preview_asset, workspace_export_preflight_report,
-    workspace_export_report, workspace_scene_report, AssetCapabilitiesReport,
-    AssetInspectionReport, AssetPreviewReport, CatalogRefs, FiveMDiscoveryReport,
-    GtaVDiscoveryReport, OperationApplyResult, OperationDocument, OperationPlan, PreviewOptions,
-    SceneAssemblyOptions, SceneManifestReport, SharedExportOptions, WorkspaceExportPreflightReport,
+    workspace_export_report, workspace_scene_asset_preview_with_sources,
+    workspace_scene_report_with_sources, AssetCapabilitiesReport, AssetInspectionReport,
+    AssetPreviewReport, CatalogRefs, FiveMDiscoveryReport, GtaVDiscoveryReport,
+    OperationApplyResult, OperationDocument, OperationPlan, PreviewOptions, SceneAssemblyOptions,
+    SceneManifestReport, SceneRpfMount, SharedExportOptions, WorkspaceExportPreflightReport,
     WorkspaceExportReport, MAX_SCENE_NODE_LIMIT,
 };
 use serde::{Deserialize, Serialize};
 
-const RAGELAB_CORE_REVISION: &str = "c8264587a4daf864b8d3f1b88727f53cab942573";
+const RAGELAB_CORE_REVISION: &str = "7089e92d669a072ca821e6887b0d3450b7a1a03b";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,10 +27,44 @@ struct StudioInfo {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct SceneRpfMountRequest {
+    archive: String,
+    #[serde(default)]
+    nested: Vec<String>,
+    keys: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct WorkspaceSceneRequest {
     workspace: String,
     ymap: String,
+    #[serde(default)]
+    fallback_roots: Vec<String>,
+    #[serde(default)]
+    rpf_mounts: Vec<SceneRpfMountRequest>,
     max_nodes: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceSceneAssetPreviewRequest {
+    workspace: String,
+    ymap: String,
+    #[serde(default)]
+    fallback_roots: Vec<String>,
+    #[serde(default)]
+    rpf_mounts: Vec<SceneRpfMountRequest>,
+    max_nodes: Option<usize>,
+    asset_ref: usize,
+}
+
+struct ValidatedWorkspaceScene {
+    workspace: PathBuf,
+    ymap: PathBuf,
+    fallback_roots: Vec<PathBuf>,
+    rpf_mounts: Vec<SceneRpfMount>,
+    options: SceneAssemblyOptions,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -130,15 +165,56 @@ fn core_asset_preview(request: PreviewRequest) -> Result<AssetPreviewReport, Str
 
 #[tauri::command]
 fn core_workspace_scene(request: WorkspaceSceneRequest) -> Result<SceneManifestReport, String> {
-    let (workspace, ymap, options) = validate_workspace_scene_request(&request)?;
-    workspace_scene_report(&workspace, &ymap, options).map_err(core_error)
+    let scene = validate_workspace_scene_context(
+        &request.workspace,
+        &request.ymap,
+        &request.fallback_roots,
+        &request.rpf_mounts,
+        request.max_nodes,
+    )?;
+    workspace_scene_report_with_sources(
+        &scene.workspace,
+        &scene.ymap,
+        &scene.fallback_roots,
+        &scene.rpf_mounts,
+        scene.options,
+    )
+    .map_err(core_error)
 }
 
-fn validate_workspace_scene_request(
-    request: &WorkspaceSceneRequest,
-) -> Result<(PathBuf, PathBuf, SceneAssemblyOptions), String> {
-    let workspace = PathBuf::from(&request.workspace);
-    let ymap = PathBuf::from(&request.ymap);
+#[tauri::command]
+fn core_workspace_scene_asset_preview(
+    request: WorkspaceSceneAssetPreviewRequest,
+) -> Result<AssetPreviewReport, String> {
+    let scene = validate_workspace_scene_context(
+        &request.workspace,
+        &request.ymap,
+        &request.fallback_roots,
+        &request.rpf_mounts,
+        request.max_nodes,
+    )?;
+    workspace_scene_asset_preview_with_sources(
+        &scene.workspace,
+        &scene.ymap,
+        &scene.fallback_roots,
+        &scene.rpf_mounts,
+        scene.options,
+        request.asset_ref,
+        PreviewOptions::default(),
+    )
+    .map_err(core_error)
+}
+
+fn validate_workspace_scene_context(
+    workspace: &str,
+    ymap: &str,
+    fallback_roots: &[String],
+    rpf_mounts: &[SceneRpfMountRequest],
+    max_nodes: Option<usize>,
+) -> Result<ValidatedWorkspaceScene, String> {
+    let workspace = PathBuf::from(workspace);
+    let ymap = PathBuf::from(ymap);
+    let fallback_roots = fallback_roots.iter().map(PathBuf::from).collect::<Vec<_>>();
 
     if !workspace.is_absolute() {
         return Err("Studio scene workspace must be an absolute path".into());
@@ -146,6 +222,66 @@ fn validate_workspace_scene_request(
     if !ymap.is_absolute() {
         return Err("Studio scene YMAP must be an absolute path".into());
     }
+    for fallback_root in &fallback_roots {
+        if !fallback_root.is_absolute() {
+            return Err(format!(
+                "Studio scene fallback root must be an absolute path: {}",
+                fallback_root.display()
+            ));
+        }
+        if !fallback_root.is_dir() {
+            return Err(format!(
+                "Studio scene fallback root is not a directory: {}",
+                fallback_root.display()
+            ));
+        }
+    }
+
+    let mut validated_rpf_mounts = Vec::with_capacity(rpf_mounts.len());
+    for mount in rpf_mounts {
+        let archive = PathBuf::from(&mount.archive);
+        let keys = PathBuf::from(&mount.keys);
+        if !archive.is_absolute() {
+            return Err(format!(
+                "Studio scene RPF archive must be an absolute path: {}",
+                archive.display()
+            ));
+        }
+        if !archive.is_file() {
+            return Err(format!(
+                "Studio scene RPF archive is not a file: {}",
+                archive.display()
+            ));
+        }
+        if !archive
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("rpf"))
+        {
+            return Err(format!(
+                "Studio scene RPF archive must use the .rpf extension: {}",
+                archive.display()
+            ));
+        }
+        if !keys.is_absolute() {
+            return Err(format!(
+                "Studio scene RPF keys must be an absolute directory: {}",
+                keys.display()
+            ));
+        }
+        if !keys.is_dir() {
+            return Err(format!(
+                "Studio scene RPF keys directory does not exist: {}",
+                keys.display()
+            ));
+        }
+        if mount.nested.iter().any(|entry| entry.trim().is_empty()) {
+            return Err("Studio scene nested RPF paths must not be empty".into());
+        }
+
+        validated_rpf_mounts.push(SceneRpfMount::new(archive, mount.nested.clone(), keys));
+    }
+
     if !workspace.is_dir() {
         return Err(format!(
             "Studio scene workspace is not a directory: {}",
@@ -166,9 +302,7 @@ fn validate_workspace_scene_request(
         return Err("Studio scene input must use the .ymap extension".into());
     }
 
-    let max_nodes = request
-        .max_nodes
-        .unwrap_or_else(|| SceneAssemblyOptions::default().max_nodes);
+    let max_nodes = max_nodes.unwrap_or_else(|| SceneAssemblyOptions::default().max_nodes);
     if max_nodes == 0 {
         return Err("Studio scene maxNodes must be greater than zero".into());
     }
@@ -186,7 +320,13 @@ fn validate_workspace_scene_request(
         return Err("Studio scene YMAP must be contained by the selected workspace".into());
     }
 
-    Ok((workspace, ymap, SceneAssemblyOptions::new(max_nodes)))
+    Ok(ValidatedWorkspaceScene {
+        workspace,
+        ymap,
+        fallback_roots,
+        rpf_mounts: validated_rpf_mounts,
+        options: SceneAssemblyOptions::new(max_nodes),
+    })
 }
 
 #[tauri::command]
@@ -342,6 +482,7 @@ pub fn run() {
             core_asset_capabilities,
             core_asset_preview,
             core_workspace_scene,
+            core_workspace_scene_asset_preview,
             core_workspace_export_preflight,
             core_workspace_export,
             core_operation_plan,
@@ -379,53 +520,78 @@ mod tests {
     }
 
     #[test]
-    fn workspace_scene_request_enforces_absolute_contained_ymap_and_limits() {
+    fn workspace_scene_request_enforces_paths_mounts_and_limits() {
         let base =
             std::env::temp_dir().join(format!("ragelab-studio-scene-{}", std::process::id()));
         let workspace = base.join("workspace");
         let inside = workspace.join("map.ymap");
         let outside = base.join("outside.ymap");
+        let archive = base.join("game.rpf");
+        let keys = base.join("keys");
 
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&workspace).unwrap();
+        fs::create_dir_all(&keys).unwrap();
         fs::write(&inside, b"fixture").unwrap();
         fs::write(&outside, b"fixture").unwrap();
+        fs::write(&archive, b"fixture").unwrap();
 
-        let valid = WorkspaceSceneRequest {
-            workspace: workspace.display().to_string(),
-            ymap: inside.display().to_string(),
-            max_nodes: Some(42),
-        };
-        let (_, _, options) = validate_workspace_scene_request(&valid).unwrap();
-        assert_eq!(options.max_nodes, 42);
+        let mounts = vec![SceneRpfMountRequest {
+            archive: archive.display().to_string(),
+            nested: vec!["nested/content.rpf".into()],
+            keys: keys.display().to_string(),
+        }];
+        let valid = validate_workspace_scene_context(
+            &workspace.display().to_string(),
+            &inside.display().to_string(),
+            &[],
+            &mounts,
+            Some(42),
+        )
+        .unwrap();
+        assert!(valid.fallback_roots.is_empty());
+        assert_eq!(valid.rpf_mounts.len(), 1);
+        assert_eq!(valid.options.max_nodes, 42);
 
-        let relative = WorkspaceSceneRequest {
-            workspace: "relative".into(),
-            ymap: "map.ymap".into(),
-            max_nodes: None,
-        };
-        assert!(validate_workspace_scene_request(&relative).is_err());
+        assert!(validate_workspace_scene_context("relative", "map.ymap", &[], &[], None).is_err());
+        assert!(validate_workspace_scene_context(
+            &workspace.display().to_string(),
+            &outside.display().to_string(),
+            &[],
+            &[],
+            None,
+        )
+        .is_err());
+        assert!(validate_workspace_scene_context(
+            &workspace.display().to_string(),
+            &inside.display().to_string(),
+            &[],
+            &[],
+            Some(0),
+        )
+        .is_err());
+        assert!(validate_workspace_scene_context(
+            &workspace.display().to_string(),
+            &inside.display().to_string(),
+            &[],
+            &[],
+            Some(MAX_SCENE_NODE_LIMIT + 1),
+        )
+        .is_err());
 
-        let outside_request = WorkspaceSceneRequest {
-            workspace: workspace.display().to_string(),
-            ymap: outside.display().to_string(),
-            max_nodes: None,
-        };
-        assert!(validate_workspace_scene_request(&outside_request).is_err());
-
-        let zero = WorkspaceSceneRequest {
-            workspace: workspace.display().to_string(),
-            ymap: inside.display().to_string(),
-            max_nodes: Some(0),
-        };
-        assert!(validate_workspace_scene_request(&zero).is_err());
-
-        let too_large = WorkspaceSceneRequest {
-            workspace: workspace.display().to_string(),
-            ymap: inside.display().to_string(),
-            max_nodes: Some(MAX_SCENE_NODE_LIMIT + 1),
-        };
-        assert!(validate_workspace_scene_request(&too_large).is_err());
+        let invalid_mount = vec![SceneRpfMountRequest {
+            archive: base.join("missing.rpf").display().to_string(),
+            nested: Vec::new(),
+            keys: keys.display().to_string(),
+        }];
+        assert!(validate_workspace_scene_context(
+            &workspace.display().to_string(),
+            &inside.display().to_string(),
+            &[],
+            &invalid_mount,
+            None,
+        )
+        .is_err());
 
         fs::remove_dir_all(base).unwrap();
     }

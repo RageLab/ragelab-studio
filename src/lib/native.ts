@@ -240,6 +240,12 @@ export interface SceneAssetReferenceReport {
   selector: SceneAssetSelectorReport | null;
 }
 
+export interface SceneRpfMount {
+  archive: string;
+  nested: string[];
+  keys: string;
+}
+
 export interface SceneManifestReport {
   schemaVersion: number;
   root: {
@@ -444,11 +450,35 @@ export function assembleWorkspaceScene(
   workspace: string,
   ymap: string,
   maxNodes?: number,
+  fallbackRoots: string[] = [],
+  rpfMounts: SceneRpfMount[] = [],
 ): Promise<SceneManifestReport> {
   return invoke<SceneManifestReport>("core_workspace_scene", {
     request: {
       workspace,
       ymap,
+      fallbackRoots,
+      rpfMounts,
+      maxNodes,
+    },
+  });
+}
+
+export function previewWorkspaceSceneAsset(
+  workspace: string,
+  ymap: string,
+  assetRef: number,
+  maxNodes?: number,
+  fallbackRoots: string[] = [],
+  rpfMounts: SceneRpfMount[] = [],
+): Promise<AssetPreviewReport> {
+  return invoke<AssetPreviewReport>("core_workspace_scene_asset_preview", {
+    request: {
+      workspace,
+      ymap,
+      assetRef,
+      fallbackRoots,
+      rpfMounts,
       maxNodes,
     },
   });
@@ -492,6 +522,42 @@ export async function chooseWorkspaceDirectory(): Promise<string | null> {
     directory: true,
     multiple: false,
     title: "Open workspace",
+  });
+
+  return typeof selected === "string" ? selected : null;
+}
+
+export async function chooseSceneFallbackDirectory(): Promise<string | null> {
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title: "Open optional loose asset fallback",
+  });
+
+  return typeof selected === "string" ? selected : null;
+}
+
+export async function chooseSceneRpfArchive(): Promise<string | null> {
+  const selected = await open({
+    directory: false,
+    multiple: false,
+    title: "Open read-only GTA RPF archive",
+    filters: [
+      {
+        name: "RPF",
+        extensions: ["rpf"],
+      },
+    ],
+  });
+
+  return typeof selected === "string" ? selected : null;
+}
+
+export async function chooseSceneRpfKeysDirectory(): Promise<string | null> {
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title: "Open GTA Legacy RPF keys directory",
   });
 
   return typeof selected === "string" ? selected : null;

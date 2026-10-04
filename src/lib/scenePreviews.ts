@@ -1,13 +1,21 @@
 import {
-  previewAsset,
+  previewWorkspaceSceneAsset,
   type AssetPreviewReport,
-  type CorePreviewOptions,
   type SceneAssetReferenceReport,
   type SceneManifestReport,
+  type SceneRpfMount,
 } from "$lib/native";
 
 export const SCENE_PREVIEW_ASSET_LIMIT = 24;
 export const SCENE_PREVIEW_CONCURRENCY = 3;
+
+export interface ScenePreviewContext {
+  workspace: string;
+  ymap: string;
+  maxNodes?: number;
+  fallbackRoots?: string[];
+  rpfMounts?: SceneRpfMount[];
+}
 
 export interface ScenePreviewLoadResult {
   previews: Record<number, AssetPreviewReport>;
@@ -21,6 +29,7 @@ export interface ScenePreviewLoadResult {
 
 export async function loadSceneAssetPreviews(
   manifest: SceneManifestReport,
+  context: ScenePreviewContext,
 ): Promise<ScenePreviewLoadResult> {
   const assetById = new Map(
     manifest.assets.map((asset) => [asset.id, asset] as const),
@@ -82,9 +91,13 @@ export async function loadSceneAssetPreviews(
       requestedAssets += 1;
 
       try {
-        previews[asset.id] = await previewAsset(
-          asset.path,
-          previewOptions(asset),
+        previews[asset.id] = await previewWorkspaceSceneAsset(
+          context.workspace,
+          context.ymap,
+          asset.id,
+          context.maxNodes,
+          context.fallbackRoots ?? [],
+          context.rpfMounts ?? [],
         );
       } catch (error) {
         errors[asset.id] =
@@ -114,14 +127,4 @@ export async function loadSceneAssetPreviews(
 
 function isPreviewableModelAsset(asset: SceneAssetReferenceReport): boolean {
   return asset.kind === "YDR" || asset.kind === "YDD";
-}
-
-function previewOptions(asset: SceneAssetReferenceReport): CorePreviewOptions {
-  if (asset.kind === "YDD" && asset.selector?.type === "yddDrawable") {
-    return {
-      drawableIndex: asset.selector.index,
-    };
-  }
-
-  return {};
 }

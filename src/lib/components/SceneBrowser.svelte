@@ -2,10 +2,14 @@
   import SceneViewport from "$lib/components/SceneViewport.svelte";
   import {
     assembleWorkspaceScene,
+    chooseSceneFallbackDirectory,
+    chooseSceneRpfArchive,
+    chooseSceneRpfKeysDirectory,
     chooseWorkspaceYmap,
     type AssetPreviewReport,
     type SceneManifestReport,
     type SceneNodeReport,
+    type SceneRpfMount,
   } from "$lib/native";
   import {
     loadSceneAssetPreviews,
@@ -16,6 +20,11 @@
 
   let activeWorkspacePath: string | null = workspacePath;
   let ymapPath: string | null = null;
+  let fallbackRoot: string | null = null;
+  let rpfArchive: string | null = null;
+  let rpfKeys: string | null = null;
+  let rpfNested = "";
+  let rpfMounts: SceneRpfMount[] = [];
   let manifest: SceneManifestReport | null = null;
   let loading = false;
   let errorMessage = "";
@@ -42,6 +51,20 @@
     previewLoading = false;
     sceneGeneration += 1;
   }
+
+  $: rpfMounts =
+    rpfArchive && rpfKeys
+      ? [
+          {
+            archive: rpfArchive,
+            keys: rpfKeys,
+            nested: rpfNested
+              .split(/\r?\n/)
+              .map((value) => value.trim())
+              .filter(Boolean),
+          },
+        ]
+      : [];
 
   $: selectedNode =
     manifest && selectedNodeIndex !== null
@@ -85,6 +108,115 @@
     }
   }
 
+  async function chooseFallbackRoot() {
+    errorMessage = "";
+
+    try {
+      const selected = await chooseSceneFallbackDirectory();
+      if (!selected) {
+        return;
+      }
+
+      fallbackRoot = selected;
+      manifest = null;
+      selectedNodeIndex = null;
+      assetPreviews = {};
+      previewLoad = null;
+      sceneGeneration += 1;
+
+      if (ymapPath) {
+        await loadScene();
+      }
+    } catch (error) {
+      errorMessage = errorMessageFor(
+        error,
+        "Unable to choose an optional loose asset fallback.",
+      );
+    }
+  }
+
+  async function clearFallbackRoot() {
+    fallbackRoot = null;
+    manifest = null;
+    selectedNodeIndex = null;
+    assetPreviews = {};
+    previewLoad = null;
+    sceneGeneration += 1;
+
+    if (ymapPath) {
+      await loadScene();
+    }
+  }
+
+  async function chooseRpfArchive() {
+    errorMessage = "";
+
+    try {
+      const selected = await chooseSceneRpfArchive();
+      if (!selected) {
+        return;
+      }
+
+      rpfArchive = selected;
+      manifest = null;
+      selectedNodeIndex = null;
+      assetPreviews = {};
+      previewLoad = null;
+      sceneGeneration += 1;
+
+      if (ymapPath && rpfKeys) {
+        await loadScene();
+      }
+    } catch (error) {
+      errorMessage = errorMessageFor(error, "Unable to choose an RPF archive.");
+    }
+  }
+
+  async function chooseRpfKeys() {
+    errorMessage = "";
+
+    try {
+      const selected = await chooseSceneRpfKeysDirectory();
+      if (!selected) {
+        return;
+      }
+
+      rpfKeys = selected;
+      manifest = null;
+      selectedNodeIndex = null;
+      assetPreviews = {};
+      previewLoad = null;
+      sceneGeneration += 1;
+
+      if (ymapPath && rpfArchive) {
+        await loadScene();
+      }
+    } catch (error) {
+      errorMessage = errorMessageFor(error, "Unable to choose an RPF key store.");
+    }
+  }
+
+  async function clearRpfSource() {
+    rpfArchive = null;
+    rpfKeys = null;
+    rpfNested = "";
+    manifest = null;
+    selectedNodeIndex = null;
+    assetPreviews = {};
+    previewLoad = null;
+    sceneGeneration += 1;
+
+    if (ymapPath) {
+      await loadScene();
+    }
+  }
+
+  async function reloadScene() {
+    if (ymapPath) {
+      await loadScene();
+    }
+  }
+
   async function loadScene() {
     if (!workspacePath || !ymapPath) {
       return;
@@ -111,10 +243,15 @@
     }
 
     try {
+      const fallbackRoots = fallbackRoot ? [fallbackRoot] : [];
+      const mounts = rpfMounts;
+
       const assembled = await assembleWorkspaceScene(
         workspacePath,
         ymapPath,
         parsedMaxNodes,
+        fallbackRoots,
+        mounts,
       );
 
       if (generation !== sceneGeneration) {
@@ -125,7 +262,13 @@
       loading = false;
       previewLoading = true;
 
-      const loaded = await loadSceneAssetPreviews(assembled);
+      const loaded = await loadSceneAssetPreviews(assembled, {
+        workspace: workspacePath,
+        ymap: ymapPath,
+        maxNodes: parsedMaxNodes,
+        fallbackRoots,
+        rpfMounts: mounts,
+      });
       if (generation !== sceneGeneration) {
         return;
       }
@@ -163,7 +306,8 @@
       <h2>YMAP scene manifest</h2>
       <p class="detail">
         Provider resolution, asset references, transforms, collision state, limits,
-        and unresolved reasons come directly from RageLab core.
+        and unresolved reasons come directly from RageLab core. Read-only GTA RPF
+        sources can supply providers and assets without loose extraction.
       </p>
     </div>
 
@@ -180,15 +324,77 @@
         />
       </label>
 
+      <button type="button" onclick={chooseRpfArchive} disabled={loading}>
+        {rpfArchive ? "Change RPF" : "Add RPF source"}
+      </button>
+
+      <button type="button" onclick={chooseRpfKeys} disabled={loading}>
+        {rpfKeys ? "Change RPF keys" : "Select RPF keys"}
+      </button>
+
+      <button type="button" onclick={chooseFallbackRoot} disabled={loading}>
+        {fallbackRoot ? "Change loose fallback" : "Loose fallback"}
+      </button>
+
+      {#if fallbackRoot}
+        <button type="button" onclick={clearFallbackRoot} disabled={loading}>
+          Clear loose fallback
+        </button>
+      {/if}
+
       <button
         type="button"
         onclick={chooseYmap}
         disabled={!workspacePath || loading}
       >
-        {loading ? "Assembling…" : "Open workspace YMAP"}
+        {loading ? "Assembling..." : "Open workspace YMAP"}
       </button>
     </div>
   </div>
+
+  {#if rpfArchive || rpfKeys}
+    <div class="source-config">
+      <div class="source-fields">
+        <div>
+          <span>RPF archive</span>
+          <code>{rpfArchive ?? "not selected"}</code>
+        </div>
+        <div>
+          <span>RPF key store</span>
+          <code>{rpfKeys ?? "not selected"}</code>
+        </div>
+      </div>
+
+      <label class="nested-chain">
+        <span>Nested RPF chain · one entry path per line</span>
+        <textarea
+          rows="3"
+          bind:value={rpfNested}
+          placeholder="x64/levels/gta5/.../metadata.rpf"
+          disabled={loading}
+        ></textarea>
+      </label>
+
+      <div class="source-actions">
+        <button
+          type="button"
+          onclick={reloadScene}
+          disabled={!ymapPath || !rpfArchive || !rpfKeys || loading}
+        >
+          Reload RPF source
+        </button>
+        <button type="button" onclick={clearRpfSource} disabled={loading}>
+          Clear RPF source
+        </button>
+      </div>
+
+      {#if (rpfArchive && !rpfKeys) || (!rpfArchive && rpfKeys)}
+        <p class="source-note">
+          Both the RPF archive and key store are required before this source is mounted.
+        </p>
+      {/if}
+    </div>
+  {/if}
 
   {#if !workspacePath}
     <div class="empty">
@@ -199,6 +405,16 @@
     <div class="workspace-path">
       <span>Workspace</span>
       <code>{workspacePath}</code>
+      {#if fallbackRoot}
+        <span>Loose fallback</span>
+        <code>{fallbackRoot}</code>
+      {/if}
+      {#if rpfArchive && rpfKeys}
+        <span>RPF source</span>
+        <code>
+          {rpfArchive}{rpfNested.trim() ? " → " + rpfNested.trim().replace(/\r?\n/g, " → ") : ""}
+        </code>
+      {/if}
       {#if ymapPath}
         <span>YMAP</span>
         <code>{ymapPath}</code>
@@ -476,7 +692,8 @@
     gap: 8px;
   }
 
-  .actions button {
+  .actions button,
+  .source-actions button {
     border: 1px solid #d9dce1;
     border-radius: 7px;
     padding: 9px 12px;
@@ -487,7 +704,8 @@
     cursor: pointer;
   }
 
-  .actions button:disabled {
+  .actions button:disabled,
+  .source-actions button:disabled {
     cursor: default;
     opacity: 0.5;
   }
@@ -508,6 +726,62 @@
     color: #e5e7eb;
     font: inherit;
     font-size: 12px;
+  }
+
+  .source-config {
+    margin-top: 12px;
+    padding: 12px 14px;
+    border: 1px solid #29323a;
+    border-radius: 8px;
+    background: #11161b;
+    display: grid;
+    gap: 10px;
+  }
+
+  .source-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .source-fields > div,
+  .nested-chain {
+    min-width: 0;
+    display: grid;
+    gap: 5px;
+  }
+
+  .source-fields span,
+  .nested-chain > span {
+    color: #737a84;
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+
+  .nested-chain textarea {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    border: 1px solid #343941;
+    border-radius: 6px;
+    padding: 8px 9px;
+    background: #0f1216;
+    color: #e5e7eb;
+    font: 10px "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    line-height: 1.45;
+  }
+
+  .source-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .source-note {
+    margin: 0;
+    color: #bca575;
+    font-size: 10px;
   }
 
   .empty,
