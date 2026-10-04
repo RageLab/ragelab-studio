@@ -16,6 +16,7 @@
     geometry: THREE.BufferGeometry;
     modelIndex: number;
     geometryIndex: number;
+    shaderIndex: number | null;
   }
 
   export let manifest: SceneManifestReport | null = null;
@@ -42,7 +43,10 @@
   let realGeometryNodes = 0;
   let fallbackProxyNodes = 0;
   let sharedGeometryAssets = 0;
+  let sharedDiffuseTextures = 0;
+  let texturedMaterials = 0;
   const sharedGeometryByAssetRef = new Map<number, SharedPreviewPrimitive[]>();
+  const sharedTextureByKey = new Map<string, THREE.DataTexture>();
 
   onMount(() => {
     try {
@@ -128,6 +132,8 @@
     realGeometryNodes = 0;
     fallbackProxyNodes = 0;
     sharedGeometryAssets = 0;
+    sharedDiffuseTextures = 0;
+    texturedMaterials = 0;
 
     if (!manifest) {
       return;
@@ -192,8 +198,15 @@
     group.userData.renderMode = "assetPreview";
 
     for (const primitive of primitives) {
+      const diffuseTexture = primitive.geometry.hasAttribute("uv")
+        ? sharedDiffuseTextureForShader(viewModel.payload, primitive.shaderIndex)
+        : null;
+      if (diffuseTexture) {
+        texturedMaterials += 1;
+      }
       const material = new THREE.MeshStandardMaterial({
-        color: 0xbfc6cf,
+        color: diffuseTexture ? 0xffffff : 0xbfc6cf,
+        map: diffuseTexture,
         roughness: 0.82,
         metalness: 0.04,
         side: THREE.DoubleSide,
@@ -265,10 +278,22 @@
         geometry.computeVertexNormals();
       }
 
+      if (
+        primitive.geometry.uv0 &&
+        primitive.geometry.uv0.length === primitive.geometry.positions.length
+      ) {
+        const uv0: number[] = [];
+        for (const uv of primitive.geometry.uv0) {
+          uv0.push(uv[0], uv[1]);
+        }
+        geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uv0, 2));
+      }
+
       shared.push({
         geometry,
         modelIndex: primitive.modelIndex,
         geometryIndex: primitive.geometryIndex,
+        shaderIndex: primitive.shaderIndex,
       });
     }
 
@@ -277,6 +302,73 @@
       sharedGeometryAssets += 1;
     }
     return shared;
+  }
+
+  function sharedDiffuseTextureForShader(
+    payload: ModelPreviewPayload,
+    shaderIndex: number | null,
+  ): THREE.DataTexture | null {
+    if (shaderIndex === null) {
+      return null;
+    }
+
+    const shader = payload.shaders.find((candidate) => candidate.index === shaderIndex);
+    const diffuseName = shader?.diffuseTextureName;
+    if (!diffuseName) {
+      return null;
+    }
+
+    const texture = payload.diffuseTextures.find(
+      (candidate) =>
+        candidate.name.localeCompare(diffuseName, undefined, {
+          sensitivity: "accent",
+        }) === 0,
+    );
+    if (!texture || texture.rgbaEncoding !== "base64-rgba8") {
+      return null;
+    }
+
+    const key =
+      texture.sourcePath +
+      "|" +
+      texture.nameHash +
+      "|" +
+      texture.width +
+      "x" +
+      texture.height;
+    const cached = sharedTextureByKey.get(key);
+    if (cached) {
+      return cached;
+    }
+
+    const rgba = decodeBase64Bytes(texture.rgbaBase64);
+    if (rgba.length !== texture.width * texture.height * 4) {
+      return null;
+    }
+
+    const dataTexture = new THREE.DataTexture(
+      rgba,
+      texture.width,
+      texture.height,
+      THREE.RGBAFormat,
+      THREE.UnsignedByteType,
+    );
+    dataTexture.name = texture.name;
+    dataTexture.flipY = false;
+    dataTexture.colorSpace = THREE.SRGBColorSpace;
+    dataTexture.needsUpdate = true;
+    sharedTextureByKey.set(key, dataTexture);
+    sharedDiffuseTextures += 1;
+    return dataTexture;
+  }
+
+  function decodeBase64Bytes(encoded: string): Uint8Array {
+    const binary = atob(encoded);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
   }
 
   function buildCollisionRelationshipMarker(node: SceneNodeReport): THREE.Mesh {
@@ -482,6 +574,14 @@
     sharedGeometryAssets = 0;
   }
 
+  function disposeSharedTextureCache() {
+    for (const texture of sharedTextureByKey.values()) {
+      texture.dispose();
+    }
+    sharedTextureByKey.clear();
+    sharedDiffuseTextures = 0;
+  }
+
   function clearGroup(group: THREE.Group) {
     const children = [...group.children];
     group.clear();
@@ -490,6 +590,7 @@
       disposeObject(child);
     }
     disposeSharedGeometryCache();
+    disposeSharedTextureCache();
   }
 
   function resize() {
@@ -562,6 +663,8 @@
         <span>{placedNodes} placed</span>
         <span>{realGeometryNodes}/{REAL_GEOMETRY_NODE_LIMIT} real geometry</span>
         <span>{sharedGeometryAssets} shared assets</span>
+        <span>{sharedDiffuseTextures} shared diffuse textures</span>
+        <span>{texturedMaterials} textured materials</span>
         <span>{fallbackProxyNodes} proxy fallback</span>
         <span>{unplacedNodes} without transform</span>
         {#if selectedNodeIndex !== null}

@@ -20,6 +20,46 @@ export interface ModelPreviewPrimitive {
   geometry: ModelPreviewGeometry | null;
 }
 
+export interface ModelPreviewShader {
+  index: number;
+  nameHash: string;
+  fileHash: string;
+  textureReferenceCount: number;
+  diffuseTextureName: string | null;
+  textureReferences: Array<{
+    parameterHash: string;
+    textureName: string;
+  }>;
+  textureReferencesTruncated: boolean;
+}
+
+export interface ModelDiffuseTexture {
+  name: string;
+  nameHash: string;
+  source: "embedded" | "archetypeYtd" | "parentYtd" | string;
+  sourcePath: string;
+  originalWidth: number;
+  originalHeight: number;
+  width: number;
+  height: number;
+  downscaled: boolean;
+  rgbaEncoding: "base64-rgba8";
+  rgbaBase64: string;
+}
+
+export interface ModelDiffuseTextureResolution {
+  requested: number;
+  resolved: number;
+  unresolved: Array<Record<string, unknown>>;
+  externalDictionaryErrors?: Array<Record<string, unknown>>;
+  externalTextureDictionaryReadErrors?: string[];
+  truncated: boolean;
+  limits: {
+    maxTextures: number;
+    maxDimension: number;
+  };
+}
+
 export interface ModelPreviewPayload {
   selector: Record<string, unknown> | null;
   name: string | null;
@@ -32,7 +72,10 @@ export interface ModelPreviewPayload {
     max: Vec3;
   };
   counts: Record<string, number>;
+  shaders: ModelPreviewShader[];
   primitives: ModelPreviewPrimitive[];
+  diffuseTextures: ModelDiffuseTexture[];
+  diffuseTextureResolution: ModelDiffuseTextureResolution;
   truncated: Record<string, boolean | number>;
 }
 

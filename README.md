@@ -30,7 +30,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 The repository currently provides the desktop application shell, native workspace directory selection, GTA V Legacy/FiveM discovery, direct engine-backed asset inspection/capability discovery, bounded YDR/YDD/YBN preview, plan-first declarative Legacy editing, an engine-backed YMAP workspace scene browser, and typed native bridges for workspace export preflight/export reports. The scene browser selects a YMAP inside the active workspace, renders core summary/warnings/limits and unresolved reasons, and upgrades eligible resolved YDR/YDD nodes from symbolic proxies to bounded core preview geometry placed with the exact SceneManifest translation/quaternion/scale. Editing always chooses a separate output path, runs a dry-run plan first, invalidates that plan when parameters change, and delegates apply/replan/semantic verification to the Rust core.
 
-The Rust adapter is reproducibly pinned to RageLab core revision `c8264587a4daf864b8d3f1b88727f53cab942573`. Studio builds do not depend on a local RageLab checkout.
+The Rust adapter is reproducibly pinned to RageLab core revision `e3be0f9973c1f14d8b6200d51648441fa557ca1f`. Studio builds do not depend on a local RageLab checkout.
 
 ## Development
 

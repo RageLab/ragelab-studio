@@ -70,8 +70,10 @@ export interface GtaRpfIndexBuildReport {
   nestedArchives: number;
   indexedFiles: number;
   parsedYtyps: number;
+  parsedGtxdFiles: number;
   archetypes: number;
   fileKeys: number;
+  textureParentKeys: number;
   warnings: string[];
   platformPacks: string[];
 }
@@ -271,12 +273,31 @@ export interface SceneAssetSelectorReport {
   name: string | null;
 }
 
+export interface SceneTextureDictionarySourceReport {
+  hash: string;
+  path: string;
+}
+
+export interface SceneTextureDictionaryAmbiguityReport {
+  hash: string;
+  candidates: number;
+}
+
+export interface SceneTextureDictionaryReport {
+  state: "resolved" | "missing" | "ambiguous" | string;
+  hash: string;
+  sources: SceneTextureDictionarySourceReport[];
+  missing: string[];
+  ambiguous: SceneTextureDictionaryAmbiguityReport[];
+}
+
 export interface SceneAssetReferenceReport {
   id: number;
   kind: string;
   hash: string;
   path: string;
   selector: SceneAssetSelectorReport | null;
+  textureDictionary: SceneTextureDictionaryReport | null;
 }
 
 export interface SceneRpfMount {
