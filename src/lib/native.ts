@@ -200,7 +200,7 @@ export interface PreviewSpatial {
 
 export interface AssetPreviewReport {
   path: string;
-  type: "YDR" | "YDD" | "YBN";
+  type: "YDR" | "YDD" | "YFT" | "YBN";
   spatial: PreviewSpatial;
   preview: Record<string, unknown>;
 }

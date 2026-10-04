@@ -17,7 +17,7 @@ use ragelab_engine::{
 };
 use serde::{Deserialize, Serialize};
 
-const RAGELAB_CORE_REVISION: &str = "1296b432b718319ac6918dadeb3429bb6f8492c1";
+const RAGELAB_CORE_REVISION: &str = "1e567ea538af7161dfc963587e3821c3ed0f97d8";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -126,8 +126,10 @@ struct PreviewRequest {
 
 impl PreviewRequest {
     fn options(&self) -> PreviewOptions {
-        let mut options = PreviewOptions::default();
-        options.drawable_index = self.drawable_index;
+        let mut options = PreviewOptions {
+            drawable_index: self.drawable_index,
+            ..PreviewOptions::default()
+        };
 
         if let Some(value) = self.max_primitives {
             options.max_primitives = value;

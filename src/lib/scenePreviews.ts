@@ -129,5 +129,7 @@ export async function loadSceneAssetPreviews(
 }
 
 function isPreviewableModelAsset(asset: SceneAssetReferenceReport): boolean {
-  return asset.kind === "YDR" || asset.kind === "YDD";
+  return (
+    asset.kind === "YDR" || asset.kind === "YDD" || asset.kind === "YFT"
+  );
 }

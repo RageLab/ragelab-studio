@@ -113,7 +113,9 @@ export function previewViewModel(
   }
 
   if (
-    (report.type === "YDR" || report.type === "YDD") &&
+    (report.type === "YDR" ||
+      report.type === "YDD" ||
+      report.type === "YFT") &&
     Array.isArray(report.preview.primitives) &&
     isRecord(report.preview.bounds)
   ) {
