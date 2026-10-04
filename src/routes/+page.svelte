@@ -16,6 +16,7 @@
   let studioInfo: StudioInfo | null = null;
   let gtaDiscovery: GtaVDiscoveryReport | null = null;
   let fivemDiscovery: FiveMDiscoveryReport | null = null;
+  let gtaLegacyRoot: string | null = null;
   let workspacePath: string | null = null;
   let statusMessage = "";
   let environmentLoading = false;
@@ -27,6 +28,11 @@
       statusMessage = "Native bridge unavailable.";
     }
   });
+
+  $: gtaLegacyRoot =
+    gtaDiscovery?.candidates.find(
+      (candidate) => candidate.valid && candidate.edition === "legacy",
+    )?.root ?? null;
 
   async function openWorkspace() {
     statusMessage = "";
@@ -212,7 +218,7 @@
       </div>
     </section>
 
-    <SceneBrowser {workspacePath} />
+    <SceneBrowser {workspacePath} {gtaLegacyRoot} />
 
     <WorkspaceExport {workspacePath} />
 

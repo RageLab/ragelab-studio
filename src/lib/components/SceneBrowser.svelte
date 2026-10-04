@@ -6,6 +6,7 @@
     chooseSceneRpfArchive,
     chooseSceneRpfKeysDirectory,
     chooseWorkspaceYmap,
+    prepareGtaRpfKeys,
     type AssetPreviewReport,
     type SceneManifestReport,
     type SceneNodeReport,
@@ -17,6 +18,7 @@
   } from "$lib/scenePreviews";
 
   export let workspacePath: string | null = null;
+  export let gtaLegacyRoot: string | null = null;
 
   let activeWorkspacePath: string | null = workspacePath;
   let ymapPath: string | null = null;
@@ -37,6 +39,8 @@
   let assetPreviews: Record<number, AssetPreviewReport> = {};
   let previewLoad: ScenePreviewLoadResult | null = null;
   let previewLoading = false;
+  let keyPreparationLoading = false;
+  let keyPreparationMessage = "";
   let sceneGeneration = 0;
 
   $: if (workspacePath !== activeWorkspacePath) {
@@ -148,6 +152,43 @@
     }
   }
 
+  async function prepareKeysFromDetectedGta(reload = true) {
+    if (!gtaLegacyRoot) {
+      errorMessage =
+        "Detect a valid GTA V Legacy installation before preparing RPF keys.";
+      return;
+    }
+
+    errorMessage = "";
+    keyPreparationMessage = "";
+    keyPreparationLoading = true;
+
+    try {
+      const report = await prepareGtaRpfKeys(gtaLegacyRoot);
+      rpfKeys = report.cache;
+      keyPreparationMessage = report.cacheHit
+        ? "Reused the cached GTA Legacy RPF keys."
+        : "Prepared GTA Legacy RPF keys from GTA5.exe.";
+
+      manifest = null;
+      selectedNodeIndex = null;
+      assetPreviews = {};
+      previewLoad = null;
+      sceneGeneration += 1;
+
+      if (reload && ymapPath && rpfArchive) {
+        await loadScene();
+      }
+    } catch (error) {
+      errorMessage = errorMessageFor(
+        error,
+        "Unable to prepare GTA Legacy RPF keys.",
+      );
+    } finally {
+      keyPreparationLoading = false;
+    }
+  }
+
   async function chooseRpfArchive() {
     errorMessage = "";
 
@@ -158,6 +199,9 @@
       }
 
       rpfArchive = selected;
+      if (!rpfKeys && gtaLegacyRoot) {
+        await prepareKeysFromDetectedGta(false);
+      }
       manifest = null;
       selectedNodeIndex = null;
       assetPreviews = {};
@@ -182,6 +226,7 @@
       }
 
       rpfKeys = selected;
+      keyPreparationMessage = "Using the manually selected RPF key store.";
       manifest = null;
       selectedNodeIndex = null;
       assetPreviews = {};
@@ -199,6 +244,7 @@
   async function clearRpfSource() {
     rpfArchive = null;
     rpfKeys = null;
+    keyPreparationMessage = "";
     rpfNested = "";
     manifest = null;
     selectedNodeIndex = null;
@@ -328,8 +374,26 @@
         {rpfArchive ? "Change RPF" : "Add RPF source"}
       </button>
 
-      <button type="button" onclick={chooseRpfKeys} disabled={loading}>
-        {rpfKeys ? "Change RPF keys" : "Select RPF keys"}
+      {#if gtaLegacyRoot}
+        <button
+          type="button"
+          onclick={() => prepareKeysFromDetectedGta()}
+          disabled={loading || keyPreparationLoading}
+        >
+          {keyPreparationLoading
+            ? "Preparing RPF keys..."
+            : rpfKeys
+              ? "Refresh detected GTA keys"
+              : "Prepare detected GTA keys"}
+        </button>
+      {/if}
+
+      <button
+        type="button"
+        onclick={chooseRpfKeys}
+        disabled={loading || keyPreparationLoading}
+      >
+        {rpfKeys ? "Change RPF keys" : "Select RPF keys manually"}
       </button>
 
       <button type="button" onclick={chooseFallbackRoot} disabled={loading}>
@@ -388,7 +452,16 @@
         </button>
       </div>
 
-      {#if (rpfArchive && !rpfKeys) || (!rpfArchive && rpfKeys)}
+      {#if keyPreparationMessage}
+        <p class="source-note">{keyPreparationMessage}</p>
+      {/if}
+
+      {#if !gtaLegacyRoot && !rpfKeys}
+        <p class="source-note">
+          Detect GTA V Legacy to prepare the key cache automatically, or select an
+          existing key store manually.
+        </p>
+      {:else if (rpfArchive && !rpfKeys) || (!rpfArchive && rpfKeys)}
         <p class="source-note">
           Both the RPF archive and key store are required before this source is mounted.
         </p>

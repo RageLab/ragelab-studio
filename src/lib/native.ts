@@ -53,6 +53,14 @@ export interface GtaVDiscoveryReport {
   candidates: GtaVInstallation[];
 }
 
+export interface GtaRpfKeyCacheReport {
+  schema: "ragelab.gta.rpf-keys";
+  schemaVersion: number;
+  executable: string;
+  cache: string;
+  cacheHit: boolean;
+}
+
 export type FiveMDiscoverySource =
   | "explicitPath"
   | "environment"
@@ -422,6 +430,16 @@ export function discoverGtaLegacy(): Promise<GtaVDiscoveryReport> {
 
 export function discoverFiveMLegacy(): Promise<FiveMDiscoveryReport> {
   return invoke<FiveMDiscoveryReport>("core_discover_fivem_legacy");
+}
+
+export function prepareGtaRpfKeys(
+  gameRoot: string,
+): Promise<GtaRpfKeyCacheReport> {
+  return invoke<GtaRpfKeyCacheReport>("core_prepare_gta_rpf_keys", {
+    request: {
+      gameRoot,
+    },
+  });
 }
 
 export function inspectAsset(path: string): Promise<AssetInspectionReport> {

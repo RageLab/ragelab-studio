@@ -5,17 +5,18 @@ use std::{
 
 use ragelab_engine::{
     apply_operation_document, asset_capabilities, discover_fivem_legacy, discover_gta_v_legacy,
-    inspect_asset, plan_operation_document, preview_asset, workspace_export_preflight_report,
-    workspace_export_report, workspace_scene_asset_preview_with_sources,
-    workspace_scene_report_with_sources, AssetCapabilitiesReport, AssetInspectionReport,
-    AssetPreviewReport, CatalogRefs, FiveMDiscoveryReport, GtaVDiscoveryReport,
-    OperationApplyResult, OperationDocument, OperationPlan, PreviewOptions, SceneAssemblyOptions,
-    SceneManifestReport, SceneRpfMount, SharedExportOptions, WorkspaceExportPreflightReport,
-    WorkspaceExportReport, MAX_SCENE_NODE_LIMIT,
+    inspect_asset, plan_operation_document, prepare_gta_rpf_keys, preview_asset,
+    workspace_export_preflight_report, workspace_export_report,
+    workspace_scene_asset_preview_with_sources, workspace_scene_report_with_sources,
+    AssetCapabilitiesReport, AssetInspectionReport, AssetPreviewReport, CatalogRefs,
+    FiveMDiscoveryReport, GtaRpfKeyCacheReport, GtaVDiscoveryReport, OperationApplyResult,
+    OperationDocument, OperationPlan, PreviewOptions, SceneAssemblyOptions, SceneManifestReport,
+    SceneRpfMount, SharedExportOptions, WorkspaceExportPreflightReport, WorkspaceExportReport,
+    MAX_SCENE_NODE_LIMIT,
 };
 use serde::{Deserialize, Serialize};
 
-const RAGELAB_CORE_REVISION: &str = "7089e92d669a072ca821e6887b0d3450b7a1a03b";
+const RAGELAB_CORE_REVISION: &str = "a10f079483cd98bc3644c69ec97a1bf6588a2ff0";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -23,6 +24,12 @@ struct StudioInfo {
     product: &'static str,
     version: &'static str,
     core_revision: &'static str,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PrepareGtaRpfKeysRequest {
+    game_root: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -146,6 +153,42 @@ fn core_discover_gta_legacy() -> GtaVDiscoveryReport {
 #[tauri::command]
 fn core_discover_fivem_legacy() -> FiveMDiscoveryReport {
     discover_fivem_legacy()
+}
+
+#[tauri::command]
+fn core_prepare_gta_rpf_keys(
+    request: PrepareGtaRpfKeysRequest,
+) -> Result<GtaRpfKeyCacheReport, String> {
+    let game_root = PathBuf::from(&request.game_root);
+    if !game_root.is_absolute() {
+        return Err("GTA Legacy root must be an absolute path".into());
+    }
+    if !game_root.is_dir() {
+        return Err(format!(
+            "GTA Legacy root is not a directory: {}",
+            game_root.display()
+        ));
+    }
+
+    let executable = game_root.join("GTA5.exe");
+    if !executable.is_file() {
+        return Err(format!(
+            "GTA5.exe was not found in the selected Legacy root: {}",
+            executable.display()
+        ));
+    }
+
+    let local_app_data = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            "LOCALAPPDATA is unavailable; cannot create RageLab key cache".to_string()
+        })?;
+    let cache_root = local_app_data
+        .join("RageLab")
+        .join("cache")
+        .join("gta-rpf-keys");
+
+    prepare_gta_rpf_keys(&executable, &cache_root).map_err(core_error)
 }
 
 #[tauri::command]
@@ -478,6 +521,7 @@ pub fn run() {
             studio_info,
             core_discover_gta_legacy,
             core_discover_fivem_legacy,
+            core_prepare_gta_rpf_keys,
             core_asset_inspect,
             core_asset_capabilities,
             core_asset_preview,
