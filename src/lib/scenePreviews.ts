@@ -7,7 +7,7 @@ import {
   type SceneRpfMount,
 } from "$lib/native";
 
-export const SCENE_PREVIEW_ASSET_LIMIT = 24;
+export const SCENE_PREVIEW_ASSET_LIMIT = 96;
 export const SCENE_PREVIEW_CONCURRENCY = 3;
 
 export interface ScenePreviewContext {

@@ -10,7 +10,13 @@
   } from "$lib/native";
   import { previewViewModel, type ModelPreviewPayload } from "$lib/preview";
 
-  const REAL_GEOMETRY_NODE_LIMIT = 128;
+  const REAL_GEOMETRY_NODE_LIMIT = 512;
+
+  interface SharedPreviewPrimitive {
+    geometry: THREE.BufferGeometry;
+    modelIndex: number;
+    geometryIndex: number;
+  }
 
   export let manifest: SceneManifestReport | null = null;
   export let previews: Record<number, AssetPreviewReport> = {};
@@ -35,6 +41,8 @@
   let unplacedNodes = 0;
   let realGeometryNodes = 0;
   let fallbackProxyNodes = 0;
+  let sharedGeometryAssets = 0;
+  const sharedGeometryByAssetRef = new Map<number, SharedPreviewPrimitive[]>();
 
   onMount(() => {
     try {
@@ -119,6 +127,7 @@
     unplacedNodes = 0;
     realGeometryNodes = 0;
     fallbackProxyNodes = 0;
+    sharedGeometryAssets = 0;
 
     if (!manifest) {
       return;
@@ -162,12 +171,17 @@
     report: AssetPreviewReport,
   ): THREE.Group | null {
     const transform = node.transform;
-    if (!transform || !transform.scale) {
+    if (!transform || !transform.scale || node.assetRef === null) {
       return null;
     }
 
     const viewModel = previewViewModel(report);
     if (!viewModel || viewModel.kind !== "model") {
+      return null;
+    }
+
+    const primitives = sharedPreviewGeometry(node.assetRef, viewModel.payload);
+    if (primitives.length === 0) {
       return null;
     }
 
@@ -177,10 +191,25 @@
     group.userData.selectable = true;
     group.userData.renderMode = "assetPreview";
 
-    const geometryCount = appendModelPreview(viewModel.payload, group, node.index);
-    if (geometryCount === 0) {
-      disposeObject(group);
-      return null;
+    for (const primitive of primitives) {
+      const material = new THREE.MeshStandardMaterial({
+        color: 0xbfc6cf,
+        roughness: 0.82,
+        metalness: 0.04,
+        side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(primitive.geometry, material);
+      mesh.name =
+        "scene-node-" +
+        node.index +
+        "-model-" +
+        primitive.modelIndex +
+        "-geometry-" +
+        primitive.geometryIndex;
+      mesh.userData.nodeIndex = node.index;
+      mesh.userData.selectable = true;
+      mesh.userData.sharedPreviewGeometry = true;
+      group.add(mesh);
     }
 
     group.position.fromArray(transform.translation);
@@ -194,13 +223,16 @@
     return group;
   }
 
-  function appendModelPreview(
+  function sharedPreviewGeometry(
+    assetRef: number,
     payload: ModelPreviewPayload,
-    target: THREE.Group,
-    nodeIndex: number,
-  ): number {
-    let count = 0;
+  ): SharedPreviewPrimitive[] {
+    const cached = sharedGeometryByAssetRef.get(assetRef);
+    if (cached) {
+      return cached;
+    }
 
+    const shared: SharedPreviewPrimitive[] = [];
     for (const primitive of payload.primitives) {
       if (!primitive.geometryIncluded || !primitive.geometry) {
         continue;
@@ -233,27 +265,18 @@
         geometry.computeVertexNormals();
       }
 
-      const material = new THREE.MeshStandardMaterial({
-        color: 0xbfc6cf,
-        roughness: 0.82,
-        metalness: 0.04,
-        side: THREE.DoubleSide,
+      shared.push({
+        geometry,
+        modelIndex: primitive.modelIndex,
+        geometryIndex: primitive.geometryIndex,
       });
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.name =
-        "scene-node-" +
-        nodeIndex +
-        "-model-" +
-        primitive.modelIndex +
-        "-geometry-" +
-        primitive.geometryIndex;
-      mesh.userData.nodeIndex = nodeIndex;
-      mesh.userData.selectable = true;
-      target.add(mesh);
-      count += 1;
     }
 
-    return count;
+    sharedGeometryByAssetRef.set(assetRef, shared);
+    if (shared.length > 0) {
+      sharedGeometryAssets += 1;
+    }
+    return shared;
   }
 
   function buildCollisionRelationshipMarker(node: SceneNodeReport): THREE.Mesh {
@@ -430,7 +453,11 @@
   function disposeObject(root: THREE.Object3D) {
     root.traverse((object) => {
       const renderable = object as THREE.Mesh | THREE.LineSegments;
-      if ("geometry" in renderable && renderable.geometry) {
+      if (
+        "geometry" in renderable &&
+        renderable.geometry &&
+        object.userData.sharedPreviewGeometry !== true
+      ) {
         renderable.geometry.dispose();
       }
 
@@ -445,6 +472,16 @@
     });
   }
 
+  function disposeSharedGeometryCache() {
+    for (const primitives of sharedGeometryByAssetRef.values()) {
+      for (const primitive of primitives) {
+        primitive.geometry.dispose();
+      }
+    }
+    sharedGeometryByAssetRef.clear();
+    sharedGeometryAssets = 0;
+  }
+
   function clearGroup(group: THREE.Group) {
     const children = [...group.children];
     group.clear();
@@ -452,6 +489,7 @@
     for (const child of children) {
       disposeObject(child);
     }
+    disposeSharedGeometryCache();
   }
 
   function resize() {
@@ -523,6 +561,7 @@
       <div class="meta-line">
         <span>{placedNodes} placed</span>
         <span>{realGeometryNodes}/{REAL_GEOMETRY_NODE_LIMIT} real geometry</span>
+        <span>{sharedGeometryAssets} shared assets</span>
         <span>{fallbackProxyNodes} proxy fallback</span>
         <span>{unplacedNodes} without transform</span>
         {#if selectedNodeIndex !== null}
