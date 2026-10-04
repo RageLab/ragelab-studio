@@ -2,6 +2,7 @@ import {
   previewWorkspaceSceneAsset,
   type AssetPreviewReport,
   type SceneAssetReferenceReport,
+  type SceneGameIndexSource,
   type SceneManifestReport,
   type SceneRpfMount,
 } from "$lib/native";
@@ -15,6 +16,7 @@ export interface ScenePreviewContext {
   maxNodes?: number;
   fallbackRoots?: string[];
   rpfMounts?: SceneRpfMount[];
+  gameIndex?: SceneGameIndexSource | null;
 }
 
 export interface ScenePreviewLoadResult {
@@ -98,6 +100,7 @@ export async function loadSceneAssetPreviews(
           context.maxNodes,
           context.fallbackRoots ?? [],
           context.rpfMounts ?? [],
+          context.gameIndex ?? null,
         );
       } catch (error) {
         errors[asset.id] =

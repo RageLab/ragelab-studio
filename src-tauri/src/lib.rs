@@ -5,18 +5,19 @@ use std::{
 
 use ragelab_engine::{
     apply_operation_document, asset_capabilities, discover_fivem_legacy, discover_gta_v_legacy,
-    inspect_asset, plan_operation_document, prepare_gta_rpf_keys, preview_asset,
-    workspace_export_preflight_report, workspace_export_report,
-    workspace_scene_asset_preview_with_sources, workspace_scene_report_with_sources,
+    inspect_asset, plan_operation_document, prepare_gta_rpf_index, prepare_gta_rpf_keys,
+    preview_asset, workspace_export_preflight_report, workspace_export_report,
+    workspace_scene_asset_preview_with_game_index, workspace_scene_report_with_game_index,
     AssetCapabilitiesReport, AssetInspectionReport, AssetPreviewReport, CatalogRefs,
-    FiveMDiscoveryReport, GtaRpfKeyCacheReport, GtaVDiscoveryReport, OperationApplyResult,
-    OperationDocument, OperationPlan, PreviewOptions, SceneAssemblyOptions, SceneManifestReport,
-    SceneRpfMount, SharedExportOptions, WorkspaceExportPreflightReport, WorkspaceExportReport,
+    FiveMDiscoveryReport, GtaRpfIndexCacheReport, GtaRpfKeyCacheReport, GtaVDiscoveryReport,
+    OperationApplyResult, OperationDocument, OperationPlan, PreviewOptions, SceneAssemblyOptions,
+    SceneAssetPreviewSources, SceneGameIndexSource, SceneManifestReport, SceneRpfMount,
+    SharedExportOptions, WorkspaceExportPreflightReport, WorkspaceExportReport,
     MAX_SCENE_NODE_LIMIT,
 };
 use serde::{Deserialize, Serialize};
 
-const RAGELAB_CORE_REVISION: &str = "a10f079483cd98bc3644c69ec97a1bf6588a2ff0";
+const RAGELAB_CORE_REVISION: &str = "1296b432b718319ac6918dadeb3429bb6f8492c1";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -34,10 +35,25 @@ struct PrepareGtaRpfKeysRequest {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct PrepareGtaRpfIndexRequest {
+    game_root: String,
+    keys: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SceneRpfMountRequest {
     archive: String,
     #[serde(default)]
     nested: Vec<String>,
+    keys: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SceneGameIndexRequest {
+    game_root: String,
+    index: String,
     keys: String,
 }
 
@@ -50,6 +66,7 @@ struct WorkspaceSceneRequest {
     fallback_roots: Vec<String>,
     #[serde(default)]
     rpf_mounts: Vec<SceneRpfMountRequest>,
+    game_index: Option<SceneGameIndexRequest>,
     max_nodes: Option<usize>,
 }
 
@@ -62,6 +79,7 @@ struct WorkspaceSceneAssetPreviewRequest {
     fallback_roots: Vec<String>,
     #[serde(default)]
     rpf_mounts: Vec<SceneRpfMountRequest>,
+    game_index: Option<SceneGameIndexRequest>,
     max_nodes: Option<usize>,
     asset_ref: usize,
 }
@@ -71,6 +89,7 @@ struct ValidatedWorkspaceScene {
     ymap: PathBuf,
     fallback_roots: Vec<PathBuf>,
     rpf_mounts: Vec<SceneRpfMount>,
+    game_index: Option<SceneGameIndexSource>,
     options: SceneAssemblyOptions,
 }
 
@@ -192,6 +211,45 @@ fn core_prepare_gta_rpf_keys(
 }
 
 #[tauri::command]
+fn core_prepare_gta_rpf_index(
+    request: PrepareGtaRpfIndexRequest,
+) -> Result<GtaRpfIndexCacheReport, String> {
+    let game_root = PathBuf::from(&request.game_root);
+    let keys = PathBuf::from(&request.keys);
+
+    if !game_root.is_absolute() {
+        return Err("GTA Legacy root must be an absolute path".into());
+    }
+    if !game_root.is_dir() {
+        return Err(format!(
+            "GTA Legacy root is not a directory: {}",
+            game_root.display()
+        ));
+    }
+    if !keys.is_absolute() {
+        return Err("GTA RPF key store must be an absolute path".into());
+    }
+    if !keys.is_dir() {
+        return Err(format!(
+            "GTA RPF key store is not a directory: {}",
+            keys.display()
+        ));
+    }
+
+    let local_app_data = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            "LOCALAPPDATA is unavailable; cannot create RageLab game index cache".to_string()
+        })?;
+    let cache_root = local_app_data
+        .join("RageLab")
+        .join("cache")
+        .join("gta-rpf-index");
+
+    prepare_gta_rpf_index(&game_root, &keys, &cache_root).map_err(core_error)
+}
+
+#[tauri::command]
 fn core_asset_inspect(path: String) -> Result<AssetInspectionReport, String> {
     inspect_asset(Path::new(&path)).map_err(core_error)
 }
@@ -213,13 +271,15 @@ fn core_workspace_scene(request: WorkspaceSceneRequest) -> Result<SceneManifestR
         &request.ymap,
         &request.fallback_roots,
         &request.rpf_mounts,
+        request.game_index.as_ref(),
         request.max_nodes,
     )?;
-    workspace_scene_report_with_sources(
+    workspace_scene_report_with_game_index(
         &scene.workspace,
         &scene.ymap,
         &scene.fallback_roots,
         &scene.rpf_mounts,
+        scene.game_index.as_ref(),
         scene.options,
     )
     .map_err(core_error)
@@ -234,13 +294,17 @@ fn core_workspace_scene_asset_preview(
         &request.ymap,
         &request.fallback_roots,
         &request.rpf_mounts,
+        request.game_index.as_ref(),
         request.max_nodes,
     )?;
-    workspace_scene_asset_preview_with_sources(
+    workspace_scene_asset_preview_with_game_index(
         &scene.workspace,
         &scene.ymap,
-        &scene.fallback_roots,
-        &scene.rpf_mounts,
+        SceneAssetPreviewSources {
+            fallback_roots: &scene.fallback_roots,
+            rpf_mounts: &scene.rpf_mounts,
+            game_index: scene.game_index.as_ref(),
+        },
         scene.options,
         request.asset_ref,
         PreviewOptions::default(),
@@ -253,6 +317,7 @@ fn validate_workspace_scene_context(
     ymap: &str,
     fallback_roots: &[String],
     rpf_mounts: &[SceneRpfMountRequest],
+    game_index: Option<&SceneGameIndexRequest>,
     max_nodes: Option<usize>,
 ) -> Result<ValidatedWorkspaceScene, String> {
     let workspace = PathBuf::from(workspace);
@@ -325,6 +390,35 @@ fn validate_workspace_scene_context(
         validated_rpf_mounts.push(SceneRpfMount::new(archive, mount.nested.clone(), keys));
     }
 
+    let validated_game_index = if let Some(source) = game_index {
+        let game_root = PathBuf::from(&source.game_root);
+        let index = PathBuf::from(&source.index);
+        let keys = PathBuf::from(&source.keys);
+
+        if !game_root.is_absolute() || !game_root.is_dir() {
+            return Err(format!(
+                "Studio scene game root is invalid: {}",
+                game_root.display()
+            ));
+        }
+        if !index.is_absolute() || !index.is_file() {
+            return Err(format!(
+                "Studio scene game index is invalid: {}",
+                index.display()
+            ));
+        }
+        if !keys.is_absolute() || !keys.is_dir() {
+            return Err(format!(
+                "Studio scene game key store is invalid: {}",
+                keys.display()
+            ));
+        }
+
+        Some(SceneGameIndexSource::new(game_root, index, keys))
+    } else {
+        None
+    };
+
     if !workspace.is_dir() {
         return Err(format!(
             "Studio scene workspace is not a directory: {}",
@@ -368,6 +462,7 @@ fn validate_workspace_scene_context(
         ymap,
         fallback_roots,
         rpf_mounts: validated_rpf_mounts,
+        game_index: validated_game_index,
         options: SceneAssemblyOptions::new(max_nodes),
     })
 }
@@ -522,6 +617,7 @@ pub fn run() {
             core_discover_gta_legacy,
             core_discover_fivem_legacy,
             core_prepare_gta_rpf_keys,
+            core_prepare_gta_rpf_index,
             core_asset_inspect,
             core_asset_capabilities,
             core_asset_preview,
@@ -590,19 +686,24 @@ mod tests {
             &inside.display().to_string(),
             &[],
             &mounts,
+            None,
             Some(42),
         )
         .unwrap();
         assert!(valid.fallback_roots.is_empty());
         assert_eq!(valid.rpf_mounts.len(), 1);
+        assert!(valid.game_index.is_none());
         assert_eq!(valid.options.max_nodes, 42);
 
-        assert!(validate_workspace_scene_context("relative", "map.ymap", &[], &[], None).is_err());
+        assert!(
+            validate_workspace_scene_context("relative", "map.ymap", &[], &[], None, None).is_err()
+        );
         assert!(validate_workspace_scene_context(
             &workspace.display().to_string(),
             &outside.display().to_string(),
             &[],
             &[],
+            None,
             None,
         )
         .is_err());
@@ -611,6 +712,7 @@ mod tests {
             &inside.display().to_string(),
             &[],
             &[],
+            None,
             Some(0),
         )
         .is_err());
@@ -619,6 +721,7 @@ mod tests {
             &inside.display().to_string(),
             &[],
             &[],
+            None,
             Some(MAX_SCENE_NODE_LIMIT + 1),
         )
         .is_err());
@@ -633,6 +736,40 @@ mod tests {
             &inside.display().to_string(),
             &[],
             &invalid_mount,
+            None,
+            None,
+        )
+        .is_err());
+
+        let index = base.join("game-index.bin");
+        fs::write(&index, b"fixture").unwrap();
+        let game_index = SceneGameIndexRequest {
+            game_root: base.display().to_string(),
+            index: index.display().to_string(),
+            keys: keys.display().to_string(),
+        };
+        let valid = validate_workspace_scene_context(
+            &workspace.display().to_string(),
+            &inside.display().to_string(),
+            &[],
+            &[],
+            Some(&game_index),
+            None,
+        )
+        .unwrap();
+        assert!(valid.game_index.is_some());
+
+        let invalid_index = SceneGameIndexRequest {
+            game_root: base.display().to_string(),
+            index: base.join("missing.bin").display().to_string(),
+            keys: keys.display().to_string(),
+        };
+        assert!(validate_workspace_scene_context(
+            &workspace.display().to_string(),
+            &inside.display().to_string(),
+            &[],
+            &[],
+            Some(&invalid_index),
             None,
         )
         .is_err());

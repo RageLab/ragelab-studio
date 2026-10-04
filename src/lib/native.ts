@@ -61,6 +61,37 @@ export interface GtaRpfKeyCacheReport {
   cacheHit: boolean;
 }
 
+export interface GtaRpfIndexBuildReport {
+  schema: "ragelab.gta.rpf-index";
+  schemaVersion: number;
+  gameRoot: string;
+  orderedArchives: number;
+  scannedArchives: number;
+  nestedArchives: number;
+  indexedFiles: number;
+  parsedYtyps: number;
+  archetypes: number;
+  fileKeys: number;
+  warnings: string[];
+  platformPacks: string[];
+}
+
+export interface GtaRpfIndexCacheReport {
+  schema: "ragelab.gta.rpf-index-cache";
+  schemaVersion: number;
+  index: string;
+  cacheHit: boolean;
+  fingerprint: {
+    gtaExeSize: number;
+    gtaExeModified: number;
+    updateRpfSize: number;
+    updateRpfModified: number;
+    outerArchiveCount: number;
+    outerArchiveSignature: number;
+  };
+  build: GtaRpfIndexBuildReport | null;
+}
+
 export type FiveMDiscoverySource =
   | "explicitPath"
   | "environment"
@@ -254,6 +285,12 @@ export interface SceneRpfMount {
   keys: string;
 }
 
+export interface SceneGameIndexSource {
+  gameRoot: string;
+  index: string;
+  keys: string;
+}
+
 export interface SceneManifestReport {
   schemaVersion: number;
   root: {
@@ -442,6 +479,18 @@ export function prepareGtaRpfKeys(
   });
 }
 
+export function prepareGtaRpfIndex(
+  gameRoot: string,
+  keys: string,
+): Promise<GtaRpfIndexCacheReport> {
+  return invoke<GtaRpfIndexCacheReport>("core_prepare_gta_rpf_index", {
+    request: {
+      gameRoot,
+      keys,
+    },
+  });
+}
+
 export function inspectAsset(path: string): Promise<AssetInspectionReport> {
   return invoke<AssetInspectionReport>("core_asset_inspect", { path });
 }
@@ -470,6 +519,7 @@ export function assembleWorkspaceScene(
   maxNodes?: number,
   fallbackRoots: string[] = [],
   rpfMounts: SceneRpfMount[] = [],
+  gameIndex: SceneGameIndexSource | null = null,
 ): Promise<SceneManifestReport> {
   return invoke<SceneManifestReport>("core_workspace_scene", {
     request: {
@@ -477,6 +527,7 @@ export function assembleWorkspaceScene(
       ymap,
       fallbackRoots,
       rpfMounts,
+      gameIndex,
       maxNodes,
     },
   });
@@ -489,6 +540,7 @@ export function previewWorkspaceSceneAsset(
   maxNodes?: number,
   fallbackRoots: string[] = [],
   rpfMounts: SceneRpfMount[] = [],
+  gameIndex: SceneGameIndexSource | null = null,
 ): Promise<AssetPreviewReport> {
   return invoke<AssetPreviewReport>("core_workspace_scene_asset_preview", {
     request: {
@@ -497,6 +549,7 @@ export function previewWorkspaceSceneAsset(
       assetRef,
       fallbackRoots,
       rpfMounts,
+      gameIndex,
       maxNodes,
     },
   });

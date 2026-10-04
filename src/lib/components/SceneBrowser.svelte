@@ -6,8 +6,10 @@
     chooseSceneRpfArchive,
     chooseSceneRpfKeysDirectory,
     chooseWorkspaceYmap,
+    prepareGtaRpfIndex,
     prepareGtaRpfKeys,
     type AssetPreviewReport,
+    type SceneGameIndexSource,
     type SceneManifestReport,
     type SceneNodeReport,
     type SceneRpfMount,
@@ -21,6 +23,7 @@
   export let gtaLegacyRoot: string | null = null;
 
   let activeWorkspacePath: string | null = workspacePath;
+  let activeGtaLegacyRoot: string | null = gtaLegacyRoot;
   let ymapPath: string | null = null;
   let fallbackRoot: string | null = null;
   let rpfArchive: string | null = null;
@@ -41,6 +44,10 @@
   let previewLoading = false;
   let keyPreparationLoading = false;
   let keyPreparationMessage = "";
+  let gameIndexLoading = false;
+  let gameIndexMessage = "";
+  let gameIndexSource: SceneGameIndexSource | null = null;
+  let gameIndexRoot: string | null = null;
   let sceneGeneration = 0;
 
   $: if (workspacePath !== activeWorkspacePath) {
@@ -54,6 +61,13 @@
     previewLoad = null;
     previewLoading = false;
     sceneGeneration += 1;
+  }
+
+  $: if (gtaLegacyRoot !== activeGtaLegacyRoot) {
+    activeGtaLegacyRoot = gtaLegacyRoot;
+    gameIndexSource = null;
+    gameIndexRoot = null;
+    gameIndexMessage = "";
   }
 
   $: rpfMounts =
@@ -189,6 +203,72 @@
     }
   }
 
+  async function ensureDetectedGameIndex(
+    force = false,
+  ): Promise<SceneGameIndexSource | null> {
+    if (!gtaLegacyRoot) {
+      return null;
+    }
+    if (!force && gameIndexSource && gameIndexRoot === gtaLegacyRoot) {
+      return gameIndexSource;
+    }
+
+    gameIndexLoading = true;
+    gameIndexMessage = "";
+
+    try {
+      const keyReport = await prepareGtaRpfKeys(gtaLegacyRoot);
+      const indexReport = await prepareGtaRpfIndex(
+        gtaLegacyRoot,
+        keyReport.cache,
+      );
+
+      gameIndexSource = {
+        gameRoot: gtaLegacyRoot,
+        index: indexReport.index,
+        keys: keyReport.cache,
+      };
+      gameIndexRoot = gtaLegacyRoot;
+      gameIndexMessage = indexReport.cacheHit
+        ? "Reused the cached GTA Legacy asset index."
+        : "Indexed " + (indexReport.build?.indexedFiles ?? 0) + " GTA asset entries.";
+
+      return gameIndexSource;
+    } catch (error) {
+      gameIndexSource = null;
+      gameIndexRoot = null;
+      throw error;
+    } finally {
+      gameIndexLoading = false;
+    }
+  }
+
+  async function refreshDetectedGameIndex() {
+    if (!gtaLegacyRoot) {
+      errorMessage =
+        "Detect a valid GTA V Legacy installation before preparing the game index.";
+      return;
+    }
+
+    errorMessage = "";
+    try {
+      await ensureDetectedGameIndex(true);
+      manifest = null;
+      selectedNodeIndex = null;
+      assetPreviews = {};
+      previewLoad = null;
+      sceneGeneration += 1;
+      if (ymapPath) {
+        await loadScene();
+      }
+    } catch (error) {
+      errorMessage = errorMessageFor(
+        error,
+        "Unable to prepare the GTA Legacy asset index.",
+      );
+    }
+  }
+
   async function chooseRpfArchive() {
     errorMessage = "";
 
@@ -291,6 +371,7 @@
     try {
       const fallbackRoots = fallbackRoot ? [fallbackRoot] : [];
       const mounts = rpfMounts;
+      const gameIndex = await ensureDetectedGameIndex();
 
       const assembled = await assembleWorkspaceScene(
         workspacePath,
@@ -298,6 +379,7 @@
         parsedMaxNodes,
         fallbackRoots,
         mounts,
+        gameIndex,
       );
 
       if (generation !== sceneGeneration) {
@@ -314,6 +396,7 @@
         maxNodes: parsedMaxNodes,
         fallbackRoots,
         rpfMounts: mounts,
+        gameIndex,
       });
       if (generation !== sceneGeneration) {
         return;
@@ -352,8 +435,9 @@
       <h2>YMAP scene manifest</h2>
       <p class="detail">
         Provider resolution, asset references, transforms, collision state, limits,
-        and unresolved reasons come directly from RageLab core. Read-only GTA RPF
-        sources can supply providers and assets without loose extraction.
+        and unresolved reasons come directly from RageLab core. A detected GTA V Legacy
+        installation uses the native cached game index automatically; manual RPF mounts
+        remain available only as an advanced override.
       </p>
     </div>
 
@@ -377,14 +461,14 @@
       {#if gtaLegacyRoot}
         <button
           type="button"
-          onclick={() => prepareKeysFromDetectedGta()}
-          disabled={loading || keyPreparationLoading}
+          onclick={refreshDetectedGameIndex}
+          disabled={loading || gameIndexLoading}
         >
-          {keyPreparationLoading
-            ? "Preparing RPF keys..."
-            : rpfKeys
-              ? "Refresh detected GTA keys"
-              : "Prepare detected GTA keys"}
+          {gameIndexLoading
+            ? "Indexing GTA..."
+            : gameIndexSource
+              ? "Refresh GTA index"
+              : "Prepare GTA index"}
         </button>
       {/if}
 
@@ -411,7 +495,11 @@
         onclick={chooseYmap}
         disabled={!workspacePath || loading}
       >
-        {loading ? "Assembling..." : "Open workspace YMAP"}
+        {gameIndexLoading
+          ? "Indexing GTA..."
+          : loading
+            ? "Assembling..."
+            : "Open workspace YMAP"}
       </button>
     </div>
   </div>
@@ -478,6 +566,14 @@
     <div class="workspace-path">
       <span>Workspace</span>
       <code>{workspacePath}</code>
+      {#if gtaLegacyRoot}
+        <span>GTA game index</span>
+        <code>
+          {gameIndexLoading
+            ? "preparing..."
+            : gameIndexSource?.index ?? "prepared on first scene load"}
+        </code>
+      {/if}
       {#if fallbackRoot}
         <span>Loose fallback</span>
         <code>{fallbackRoot}</code>
@@ -491,6 +587,10 @@
       {#if ymapPath}
         <span>YMAP</span>
         <code>{ymapPath}</code>
+      {/if}
+      {#if gameIndexMessage}
+        <span>Index status</span>
+        <code>{gameIndexMessage}</code>
       {/if}
     </div>
 
