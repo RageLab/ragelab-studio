@@ -12,9 +12,10 @@ RageLab Studio is a client of RageLab, not a second implementation of RAGE forma
 RageLab Studio
   Tauri
   Svelte
-  Three.js
+  native wgpu viewport
+  Three.js fallback
       |
-      | native commands
+      | typed native commands / RenderPackage
       v
 RageLab
   Rust core
@@ -28,9 +29,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Current status
 
-The repository currently provides the desktop application shell, native workspace directory selection, GTA V Legacy/FiveM discovery, direct engine-backed asset inspection/capability discovery, bounded YDR/YDD/YBN preview, plan-first declarative Legacy editing, an engine-backed YMAP workspace scene browser, and typed native bridges for workspace export preflight/export reports. The scene browser selects a YMAP inside the active workspace, renders core summary/warnings/limits and unresolved reasons, and upgrades eligible resolved YDR/YDD nodes from symbolic proxies to bounded core preview geometry placed with the exact SceneManifest translation/quaternion/scale. Editing always chooses a separate output path, runs a dry-run plan first, invalidates that plan when parameters change, and delegates apply/replan/semantic verification to the Rust core.
+The repository currently provides the desktop application shell, native workspace directory selection, GTA V Legacy/FiveM discovery, direct engine-backed asset inspection/capability discovery, plan-first declarative Legacy editing, an engine-backed YMAP workspace scene browser, and typed native bridges for workspace export preflight/export reports. The scene browser uses the reusable RageLab `ragelab-render` wgpu surface renderer by default: one shared `RenderPackage` carries resolved geometry, materials, textures, provenance and transforms from Core into GPU caches without reparsing RAGE data in the UI. The previous Three.js preview viewport remains available as a lazy-loaded fallback. Editing always chooses a separate output path, runs a dry-run plan first, invalidates that plan when parameters change, and delegates apply/replan/semantic verification to the Rust core.
 
-The Rust adapter is reproducibly pinned to RageLab core revision `e3be0f9973c1f14d8b6200d51648441fa557ca1f`. Studio builds do not depend on a local RageLab checkout.
+The Rust adapter and native renderer are reproducibly pinned to RageLab core revision `63f5fec65c195e318c3477da0888e5cabee53bfb`. Studio builds do not depend on a local RageLab checkout.
 
 ## Development
 
@@ -68,8 +69,8 @@ bun run tauri dev
 - Native filesystem access is exposed through narrow desktop commands.
 - Asset inspection, capabilities, preview bounds, GTA/FiveM discovery, YMAP workspace scene assembly, provider resolution, scene transforms/collision state, workspace export preflight/export, operation planning, and mutation are delegated directly to `ragelab-engine`.
 - Studio export uses core reports, `overwrite=false`, an absolute create-new output path outside the source workspace, and no adapter-side dependency resolution.
-- Scene proxies remain the fallback for unresolved, unsupported, budget-limited, preview-failed, or scale-incomplete nodes. Eligible YDR/YDD nodes use core `AssetPreviewReport` geometry only when the SceneManifest provides an explicit scale.
-- Scene preview loading is UI-bounded to 24 unique assets with concurrency 3 and a bounded cache; the asset preview payload itself remains bounded by Rust core policy.
+- The native scene viewport consumes one Core-owned `RenderPackage`; scene geometry/material/texture semantics are not reconstructed in TypeScript.
+- Three.js remains an explicit fallback for diagnostics/recovery. Its preview path is loaded only when selected, is UI-bounded to 96 unique assets with concurrency 3, and caps real preview instances at 512 nodes.
 - YBN collision dependencies remain `localOnly` and are not world-placed because the current SceneManifest does not provide an explicit collision placement transform.
 - Declarative edit forms are presentation/schema mapping only; a successful core plan is required before apply.
 - Studio operation source/output paths must be absolute, and output must differ from source; existing outputs remain rejected by the core create-new policy.

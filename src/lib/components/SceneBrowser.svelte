@@ -1,7 +1,9 @@
 <script lang="ts">
+  import NativeSceneViewport from "$lib/components/NativeSceneViewport.svelte";
   import SceneViewport from "$lib/components/SceneViewport.svelte";
   import {
     assembleWorkspaceScene,
+    completeDebugThreeViewportBenchmark,
     chooseSceneFallbackDirectory,
     chooseSceneRpfArchive,
     chooseSceneRpfKeysDirectory,
@@ -9,6 +11,7 @@
     prepareGtaRpfIndex,
     prepareGtaRpfKeys,
     type AssetPreviewReport,
+    type DebugThreeViewportBenchmarkSpec,
     type SceneGameIndexSource,
     type SceneManifestReport,
     type SceneNodeReport,
@@ -18,9 +21,14 @@
     loadSceneAssetPreviews,
     type ScenePreviewLoadResult,
   } from "$lib/scenePreviews";
+  import {
+    EMPTY_THREE_VIEWPORT_METRICS,
+    type ThreeViewportMetrics,
+  } from "$lib/viewportMetrics";
 
   export let workspacePath: string | null = null;
   export let gtaLegacyRoot: string | null = null;
+  export let debugThreeBenchmark: DebugThreeViewportBenchmarkSpec | null = null;
 
   let activeWorkspacePath: string | null = workspacePath;
   let activeGtaLegacyRoot: string | null = gtaLegacyRoot;
@@ -49,6 +57,17 @@
   let gameIndexSource: SceneGameIndexSource | null = null;
   let gameIndexRoot: string | null = null;
   let sceneGeneration = 0;
+  let viewportMode: "three" | "native" = "native";
+  let nativeViewportError = "";
+  let threeMetrics: ThreeViewportMetrics = {
+    ...EMPTY_THREE_VIEWPORT_METRICS,
+  };
+  let sceneAssemblyMs = 0;
+  let previewLoadMs = 0;
+  let totalLoadMs = 0;
+  let previewJsonBytes = 0;
+  let debugBenchmarkStarted = false;
+  let debugBenchmarkSubmitted = false;
 
   $: if (workspacePath !== activeWorkspacePath) {
     activeWorkspacePath = workspacePath;
@@ -94,6 +113,37 @@
 
   $: collisionNodes =
     manifest?.nodes.filter((node) => node.collision !== null) ?? [];
+
+  $: if (
+    debugThreeBenchmark &&
+    workspacePath &&
+    activeWorkspacePath === workspacePath &&
+    gtaLegacyRoot === debugThreeBenchmark.gtaLegacyRoot &&
+    !debugBenchmarkStarted
+  ) {
+    debugBenchmarkStarted = true;
+    viewportMode = "three";
+    ymapPath = debugThreeBenchmark.ymap;
+    maxNodes =
+      debugThreeBenchmark.maxNodes === null
+        ? ""
+        : String(debugThreeBenchmark.maxNodes);
+    void loadScene();
+  }
+
+  $: if (
+    debugThreeBenchmark &&
+    !debugBenchmarkSubmitted &&
+    manifest &&
+    !loading &&
+    !previewLoading &&
+    threeMetrics.realGeometryNodes > 0 &&
+    threeMetrics.sharedGeometryAssets > 0 &&
+    threeMetrics.sampledFrames >= 90
+  ) {
+    debugBenchmarkSubmitted = true;
+    void submitThreeBenchmark();
+  }
 
   $: selectedPreviewError =
     selectedNode?.assetRef !== null && selectedNode?.assetRef !== undefined
@@ -348,6 +398,13 @@
       return;
     }
 
+    const loadStarted = performance.now();
+    sceneAssemblyMs = 0;
+    previewLoadMs = 0;
+    totalLoadMs = 0;
+    previewJsonBytes = 0;
+    threeMetrics = { ...EMPTY_THREE_VIEWPORT_METRICS };
+
     const generation = ++sceneGeneration;
     errorMessage = "";
     loading = true;
@@ -373,6 +430,7 @@
       const mounts = rpfMounts;
       const gameIndex = await ensureDetectedGameIndex();
 
+      const assemblyStarted = performance.now();
       const assembled = await assembleWorkspaceScene(
         workspacePath,
         ymapPath,
@@ -381,6 +439,7 @@
         mounts,
         gameIndex,
       );
+      sceneAssemblyMs = performance.now() - assemblyStarted;
 
       if (generation !== sceneGeneration) {
         return;
@@ -388,22 +447,19 @@
 
       manifest = assembled;
       loading = false;
-      previewLoading = true;
+      totalLoadMs = performance.now() - loadStarted;
 
-      const loaded = await loadSceneAssetPreviews(assembled, {
-        workspace: workspacePath,
-        ymap: ymapPath,
-        maxNodes: parsedMaxNodes,
-        fallbackRoots,
-        rpfMounts: mounts,
-        gameIndex,
-      });
-      if (generation !== sceneGeneration) {
-        return;
+      if (viewportMode === "three") {
+        await loadThreePreviews(
+          assembled,
+          generation,
+          parsedMaxNodes,
+          fallbackRoots,
+          mounts,
+          gameIndex,
+          loadStarted,
+        );
       }
-
-      assetPreviews = loaded.previews;
-      previewLoad = loaded;
     } catch (error) {
       if (generation === sceneGeneration) {
         errorMessage = errorMessageFor(
@@ -416,6 +472,153 @@
         loading = false;
         previewLoading = false;
       }
+    }
+  }
+
+  async function loadThreePreviews(
+    assembled: SceneManifestReport,
+    generation: number,
+    parsedMaxNodes: number | undefined,
+    fallbackRoots: string[],
+    mounts: SceneRpfMount[],
+    gameIndex: SceneGameIndexSource | null,
+    loadStarted?: number,
+  ) {
+    if (
+      generation !== sceneGeneration ||
+      previewLoading ||
+      previewLoad !== null ||
+      Object.keys(assetPreviews).length > 0
+    ) {
+      return;
+    }
+
+    previewLoading = true;
+    try {
+      const previewStarted = performance.now();
+      const loaded = await loadSceneAssetPreviews(assembled, {
+        workspace: workspacePath!,
+        ymap: ymapPath!,
+        maxNodes: parsedMaxNodes,
+        fallbackRoots,
+        rpfMounts: mounts,
+        gameIndex,
+      });
+      previewLoadMs = performance.now() - previewStarted;
+      previewJsonBytes = new TextEncoder().encode(
+        JSON.stringify(loaded.previews),
+      ).byteLength;
+      totalLoadMs =
+        loadStarted === undefined
+          ? sceneAssemblyMs + previewLoadMs
+          : performance.now() - loadStarted;
+
+      if (generation !== sceneGeneration) {
+        return;
+      }
+
+      assetPreviews = loaded.previews;
+      previewLoad = loaded;
+    } finally {
+      if (generation === sceneGeneration) {
+        previewLoading = false;
+      }
+    }
+  }
+
+  async function activateViewport(mode: "three" | "native") {
+    viewportMode = mode;
+    if (mode === "native") {
+      nativeViewportError = "";
+      return;
+    }
+
+    if (!manifest || !workspacePath || !ymapPath) {
+      return;
+    }
+
+    try {
+      let parsedMaxNodes: number | undefined;
+      const rawMaxNodes = maxNodes.trim();
+      if (rawMaxNodes) {
+        parsedMaxNodes = Number(rawMaxNodes);
+      }
+      const fallbackRoots = fallbackRoot ? [fallbackRoot] : [];
+      const mounts = rpfMounts;
+      const gameIndex = await ensureDetectedGameIndex();
+      await loadThreePreviews(
+        manifest,
+        sceneGeneration,
+        parsedMaxNodes,
+        fallbackRoots,
+        mounts,
+        gameIndex,
+      );
+    } catch (error) {
+      errorMessage = errorMessageFor(
+        error,
+        "Unable to load the Three.js fallback previews.",
+      );
+    }
+  }
+
+  function handleNativeViewportFailure(message: string) {
+    nativeViewportError = message;
+    void activateViewport("three");
+  }
+
+  async function submitThreeBenchmark() {
+    if (!debugThreeBenchmark || !manifest) {
+      return;
+    }
+
+    try {
+      await completeDebugThreeViewportBenchmark({
+        ok: true,
+        scene: {
+          ymap: manifest.root.path,
+          totalEntities: manifest.summary.totalEntities,
+          emittedNodes: manifest.summary.emittedNodes,
+          resolvedNodes: manifest.summary.resolvedNodes,
+          unresolvedNodes: manifest.summary.unresolvedNodes,
+          assetReferences: manifest.summary.assetReferences,
+        },
+        timings: {
+          sceneAssemblyMs,
+          previewLoadMs,
+          totalLoadMs,
+          sceneBuildMs: threeMetrics.sceneBuildMs,
+          averageFrameMs: threeMetrics.averageFrameMs,
+          sampledFrames: threeMetrics.sampledFrames,
+        },
+        transport: {
+          previewJsonBytes,
+          typedPayloadBytes: threeMetrics.payloadBytes,
+        },
+        webgl: {
+          geometries: threeMetrics.rendererGeometries,
+          textures: threeMetrics.rendererTextures,
+          sharedGeometryAssets: threeMetrics.sharedGeometryAssets,
+          sharedDiffuseTextures: threeMetrics.sharedDiffuseTextures,
+          texturedMaterials: threeMetrics.texturedMaterials,
+          realGeometryNodes: threeMetrics.realGeometryNodes,
+          fallbackProxyNodes: threeMetrics.fallbackProxyNodes,
+        },
+        previews: {
+          loaded: Object.keys(assetPreviews).length,
+          eligibleAssets: previewLoad?.eligibleAssets ?? 0,
+          requestedAssets: previewLoad?.requestedAssets ?? 0,
+          reusedNodeReferences: previewLoad?.reusedNodeReferences ?? 0,
+          omittedAssets: previewLoad?.omittedAssets ?? 0,
+          skippedWithoutScale: previewLoad?.skippedWithoutScale ?? 0,
+          errors: previewLoad ? Object.keys(previewLoad.errors).length : 0,
+        },
+      });
+    } catch (error) {
+      errorMessage = errorMessageFor(
+        error,
+        "Unable to submit the automated Three.js viewport benchmark.",
+      );
     }
   }
 
@@ -650,38 +853,89 @@
         </div>
       {/if}
 
-      <div class:loading={previewLoading} class="preview-status">
-        <div>
-          <span>Resolved geometry</span>
-          <strong>
-            {Object.keys(assetPreviews).length}
-            {previewLoading ? " loading…" : " asset preview(s)"}
-          </strong>
+      {#if viewportMode === "three"}
+        <div class:loading={previewLoading} class="preview-status">
+          <div>
+            <span>Resolved geometry</span>
+            <strong>
+              {Object.keys(assetPreviews).length}
+              {previewLoading ? " loading…" : " asset preview(s)"}
+            </strong>
+          </div>
+          <div>
+            <span>UI preview budget</span>
+            <strong>{previewLoad?.eligibleAssets ?? "—"} eligible</strong>
+          </div>
+          <div>
+            <span>Reused node refs</span>
+            <strong>{previewLoad?.reusedNodeReferences ?? 0}</strong>
+          </div>
+          <div>
+            <span>Omitted by UI budget</span>
+            <strong>{previewLoad?.omittedAssets ?? 0}</strong>
+          </div>
+          <div>
+            <span>No explicit scale</span>
+            <strong>{previewLoad?.skippedWithoutScale ?? 0}</strong>
+          </div>
         </div>
+      {/if}
+
+      <div class="viewport-switcher" aria-label="Viewport renderer">
         <div>
-          <span>UI preview budget</span>
-          <strong>{previewLoad?.eligibleAssets ?? "—"} eligible</strong>
+          <span>Viewport renderer</span>
+          <strong>{viewportMode === "native" ? "Native wgpu" : "Three.js fallback"}</strong>
         </div>
-        <div>
-          <span>Reused node refs</span>
-          <strong>{previewLoad?.reusedNodeReferences ?? 0}</strong>
-        </div>
-        <div>
-          <span>Omitted by UI budget</span>
-          <strong>{previewLoad?.omittedAssets ?? 0}</strong>
-        </div>
-        <div>
-          <span>No explicit scale</span>
-          <strong>{previewLoad?.skippedWithoutScale ?? 0}</strong>
+        <div class="viewport-switcher-actions">
+          <button
+            type="button"
+            class:active={viewportMode === "native"}
+            onclick={() => void activateViewport("native")}
+          >
+            Native wgpu
+          </button>
+          <button
+            type="button"
+            class:active={viewportMode === "three"}
+            onclick={() => void activateViewport("three")}
+          >
+            Three.js
+          </button>
         </div>
       </div>
 
+      {#if nativeViewportError}
+        <div class="native-viewport-warning">
+          <strong>Native viewport fallback</strong>
+          <span>{nativeViewportError}</span>
+        </div>
+      {/if}
+
       <div class="scene-layout">
-        <SceneViewport
-          {manifest}
-          previews={assetPreviews}
-          bind:selectedNodeIndex
-        />
+        {#if
+          viewportMode === "native" &&
+          activeWorkspacePath &&
+          ymapPath
+        }
+          <NativeSceneViewport
+            {manifest}
+            workspace={activeWorkspacePath}
+            ymap={ymapPath}
+            fallbackRoots={fallbackRoot ? [fallbackRoot] : []}
+            {rpfMounts}
+            gameIndex={gameIndexSource}
+            maxNodes={maxNodes.trim() ? Number.parseInt(maxNodes, 10) : undefined}
+            bind:selectedNodeIndex
+            onNativeFailure={handleNativeViewportFailure}
+          />
+        {:else}
+          <SceneViewport
+            {manifest}
+            previews={assetPreviews}
+            bind:selectedNodeIndex
+            bind:metrics={threeMetrics}
+          />
+        {/if}
 
         <aside class="node-panel">
           <div class="node-panel-heading">
@@ -1115,6 +1369,73 @@
   .preview-status strong {
     overflow-wrap: anywhere;
     font-size: 11px;
+  }
+
+  .viewport-switcher {
+    margin-top: 10px;
+    padding: 9px 10px;
+    border: 1px solid #29323a;
+    border-radius: 8px;
+    background: #10151a;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .viewport-switcher > div:first-child {
+    display: grid;
+    gap: 3px;
+  }
+
+  .viewport-switcher span {
+    color: #727a84;
+    font-size: 9px;
+    font-weight: 650;
+    text-transform: uppercase;
+  }
+
+  .viewport-switcher strong {
+    color: #b8c0c9;
+    font-size: 11px;
+  }
+
+  .viewport-switcher-actions {
+    display: flex;
+    gap: 6px;
+  }
+
+  .viewport-switcher-actions button {
+    border: 1px solid #30363f;
+    border-radius: 5px;
+    background: #181c22;
+    color: #858c96;
+    padding: 5px 8px;
+    font: inherit;
+    font-size: 10px;
+    cursor: pointer;
+  }
+
+  .viewport-switcher-actions button.active {
+    border-color: #536575;
+    background: #202933;
+    color: #c4d0dc;
+  }
+
+  .native-viewport-warning {
+    margin-top: 8px;
+    padding: 8px 10px;
+    border: 1px solid #4b3826;
+    border-radius: 7px;
+    background: #1b1510;
+    color: #c2a27f;
+    display: flex;
+    gap: 8px;
+    font-size: 10px;
+  }
+
+  .native-viewport-warning strong {
+    color: #d0ad84;
   }
 
   .scene-layout {

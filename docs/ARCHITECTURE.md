@@ -27,7 +27,8 @@ This repository owns:
 - desktop lifecycle through Tauri;
 - local workspace selection and desktop permissions;
 - Svelte application state and interaction;
-- Three.js rendering;
+- native Tauri window/surface lifecycle for `ragelab-render`;
+- Three.js fallback rendering;
 - editor presentation, comparison, and recovery UX;
 - native command adapters required by desktop workflows.
 
@@ -42,23 +43,25 @@ Reusable behavior must be implemented in RageLab first and then exposed to the d
 The frontend communicates with Rust through typed Tauri commands.
 
 ```text
-Svelte / Three.js
-       |
-       | invoke
-       v
-Tauri commands
-       |
-       v
-RageLab Rust APIs
+Svelte
+  | invoke / normalized input / physical viewport rect
+  v
+Tauri commands --------------------------+
+  |                                      |
+  | scene/report APIs                    | native Window (no WebView)
+  v                                      v
+RageLab engine -> RenderPackage -> ragelab-render / wgpu
+                          |
+                          +-> Three.js fallback uses bounded preview reports
 ```
 
 Filesystem access, GTA/FiveM discovery, asset inspection, capability discovery, bounded preview construction, workspace indexing, YMAP scene assembly, workspace export preflight/export, mutation planning, and write operations belong on the native side of this boundary. Tauri commands should be thin wrappers that serialize core reports; they must not reinterpret format metadata, scene resolution states/transforms, export dependency/gate policy, writer eligibility, preview hard caps, or discovery evidence. Studio export additionally requires an absolute create-new output path outside the source workspace and never enables overwrite.
 
-Three.js is responsible only for visualizing core reports. For `AssetPreviewReport`, it may choose camera, lighting, materials, wireframes, and interaction behavior, but it must not reopen assets, derive writer eligibility, expand omitted geometry, or reinterpret a truncated/local-only preview as complete world-space data. YDD drawable selection is passed explicitly back to the core before rendering.
+The native scene viewport is responsible only for presenting the renderer-neutral `RenderPackage` produced by RageLab. The Tauri adapter owns window placement and normalized input forwarding; it does not parse assets or reinterpret provider/material/transform semantics. `ragelab-render` owns GPU caches, camera state, picking and highlight state. The Three.js viewport remains a fallback that visualizes bounded core reports; it may choose camera, lighting, materials, wireframes, and interaction behavior, but it must not reopen assets, derive writer eligibility, expand omitted geometry, or reinterpret a truncated/local-only preview as complete world-space data.
 
 For `SceneManifestReport`, Studio may render symbolic node proxies and selection affordances using the returned translation/quaternion and explicit scale when present. Proxy dimensions are presentation glyphs, not asset bounds. When core scale is absent, Studio must not report or infer identity scale. Provider resolution, unresolved reason codes, collision relationship state, truncation, and node limits remain authoritative core data.
 
-Resolved visual assets are loaded lazily through the existing bounded `AssetPreviewReport` service. Studio deduplicates by scene asset reference, limits a scene to 24 unique preview assets, uses at most 3 concurrent preview requests, and keeps a bounded cache. Real preview geometry is world-placed only for resolved YDR/YDD nodes that have both a core preview and explicit SceneManifest scale; real geometry instances are additionally capped at 128 nodes per viewport. Every other node remains a proxy fallback. These are presentation/performance budgets and do not replace the core preview hard caps.
+The native viewport loads one shared `RenderPackage` and therefore does not fan out per-asset JSON preview requests. GPU meshes, materials and textures are cached by stable Core identity; read-only game instances are drawn first and loose workspace instances are drawn last with a subtle workspace tint. When the Three.js fallback is selected, resolved visual assets are loaded lazily through the bounded `AssetPreviewReport` service. That fallback deduplicates by scene asset reference, limits a scene to 96 unique preview assets, uses at most 3 concurrent preview requests, and caps real geometry placement at 512 nodes. These are fallback presentation/performance budgets and do not replace Core renderer/package limits.
 
 Collision remains stricter. A `SceneCollisionRelationship` marked `localOnly` proves a dependency, not a world placement transform. Studio may render a relationship marker, but it must not place YBN geometry in the world until the core provides explicit collision placement evidence.
 

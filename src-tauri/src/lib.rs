@@ -17,7 +17,17 @@ use ragelab_engine::{
 };
 use serde::{Deserialize, Serialize};
 
-const RAGELAB_CORE_REVISION: &str = "e3be0f9973c1f14d8b6200d51648441fa557ca1f";
+mod native_viewport;
+
+use native_viewport::{
+    debug_three_viewport_benchmark_complete, debug_three_viewport_benchmark_spec,
+    native_viewport_create, native_viewport_input, native_viewport_load_scene,
+    native_viewport_pick, native_viewport_select, native_viewport_set_overlays,
+    native_viewport_set_projection, native_viewport_set_rect, native_viewport_set_visible,
+    native_viewport_shutdown, native_viewport_stats, NativeViewportState,
+};
+
+const RAGELAB_CORE_REVISION: &str = "63f5fec65c195e318c3477da0888e5cabee53bfb";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -614,6 +624,12 @@ fn core_error(error: impl std::fmt::Display) -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .manage(NativeViewportState::default())
+        .setup(|app| {
+            #[cfg(debug_assertions)]
+            native_viewport::maybe_start_debug_smoke(app.handle().clone(), RAGELAB_CORE_REVISION);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             studio_info,
             core_discover_gta_legacy,
@@ -625,6 +641,19 @@ pub fn run() {
             core_asset_preview,
             core_workspace_scene,
             core_workspace_scene_asset_preview,
+            native_viewport_create,
+            native_viewport_load_scene,
+            native_viewport_set_rect,
+            native_viewport_input,
+            native_viewport_pick,
+            native_viewport_select,
+            native_viewport_set_projection,
+            native_viewport_set_overlays,
+            native_viewport_set_visible,
+            native_viewport_stats,
+            native_viewport_shutdown,
+            debug_three_viewport_benchmark_spec,
+            debug_three_viewport_benchmark_complete,
             core_workspace_export_preflight,
             core_workspace_export,
             core_operation_plan,

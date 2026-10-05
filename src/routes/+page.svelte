@@ -7,7 +7,9 @@
     chooseWorkspaceDirectory,
     discoverFiveMLegacy,
     discoverGtaLegacy,
+    getDebugThreeViewportBenchmarkSpec,
     getStudioInfo,
+    type DebugThreeViewportBenchmarkSpec,
     type FiveMDiscoveryReport,
     type GtaVDiscoveryReport,
     type StudioInfo,
@@ -18,21 +20,30 @@
   let fivemDiscovery: FiveMDiscoveryReport | null = null;
   let gtaLegacyRoot: string | null = null;
   let workspacePath: string | null = null;
+  let debugThreeBenchmark: DebugThreeViewportBenchmarkSpec | null = null;
   let statusMessage = "";
   let environmentLoading = false;
 
   onMount(async () => {
     try {
-      studioInfo = await getStudioInfo();
+      [studioInfo, debugThreeBenchmark] = await Promise.all([
+        getStudioInfo(),
+        getDebugThreeViewportBenchmarkSpec(),
+      ]);
+      if (debugThreeBenchmark) {
+        workspacePath = debugThreeBenchmark.workspace;
+      }
     } catch {
       statusMessage = "Native bridge unavailable.";
     }
   });
 
   $: gtaLegacyRoot =
+    debugThreeBenchmark?.gtaLegacyRoot ??
     gtaDiscovery?.candidates.find(
       (candidate) => candidate.valid && candidate.edition === "legacy",
-    )?.root ?? null;
+    )?.root ??
+    null;
 
   async function openWorkspace() {
     statusMessage = "";
@@ -218,7 +229,11 @@
       </div>
     </section>
 
-    <SceneBrowser {workspacePath} {gtaLegacyRoot} />
+    <SceneBrowser
+      {workspacePath}
+      {gtaLegacyRoot}
+      debugThreeBenchmark={debugThreeBenchmark}
+    />
 
     <WorkspaceExport {workspacePath} />
 

@@ -335,6 +335,80 @@ export interface SceneManifestReport {
   };
 }
 
+export interface NativeViewportSceneRequest {
+  workspace: string;
+  ymap: string;
+  fallbackRoots?: string[];
+  rpfMounts?: SceneRpfMount[];
+  gameIndex?: SceneGameIndexSource | null;
+  maxNodes?: number;
+}
+
+export type NativeViewportProjection = "perspective" | "orthographic";
+
+export interface NativeViewportCamera {
+  target: [number, number, number];
+  eye: [number, number, number];
+  yawRadians: number;
+  pitchRadians: number;
+  distance: number;
+  projection: NativeViewportProjection;
+}
+
+export interface NativeViewportStats {
+  width: number;
+  height: number;
+  instances: number;
+  assets: number;
+  meshes: number;
+  materials: number;
+  textures: number;
+  gpuAssetCache: number;
+  gpuTextureCache: number;
+  uploadedPayloadBytes: number;
+  sceneLoadMs: number;
+  lastFrameMs: number;
+  selectedNodeIndex: number | null;
+}
+
+export interface NativeViewportReport {
+  stats: NativeViewportStats;
+  camera: NativeViewportCamera | null;
+}
+
+export interface NativeViewportPick {
+  nodeIndex: number;
+  distance: number;
+}
+
+export interface NativeViewportPickReport {
+  pick: NativeViewportPick | null;
+  viewport: NativeViewportReport;
+}
+
+export interface DebugThreeViewportBenchmarkSpec {
+  output: string;
+  workspace: string;
+  ymap: string;
+  gtaLegacyRoot: string;
+  maxNodes: number | null;
+}
+
+
+export interface NativeViewportRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export type NativeViewportInput =
+  | { kind: "orbit"; deltaX: number; deltaY: number }
+  | { kind: "pan"; deltaX: number; deltaY: number }
+  | { kind: "zoom"; delta: number }
+  | { kind: "fly"; forward: number; right: number; up: number };
+
+
 
 export interface WorkspaceExportPreflightReport {
   workspace: string;
@@ -575,6 +649,105 @@ export function previewWorkspaceSceneAsset(
     },
   });
 }
+
+export function createNativeViewport(
+  width: number,
+  height: number,
+): Promise<NativeViewportReport> {
+  return invoke<NativeViewportReport>("native_viewport_create", {
+    request: { width, height },
+  });
+}
+
+export function loadNativeViewportScene(
+  request: NativeViewportSceneRequest,
+): Promise<NativeViewportReport> {
+  return invoke<NativeViewportReport>("native_viewport_load_scene", {
+    request: {
+      workspace: request.workspace,
+      ymap: request.ymap,
+      fallbackRoots: request.fallbackRoots ?? [],
+      rpfMounts: request.rpfMounts ?? [],
+      gameIndex: request.gameIndex ?? null,
+      maxNodes: request.maxNodes,
+    },
+  });
+}
+
+export function setNativeViewportRect(
+  request: NativeViewportRect,
+): Promise<NativeViewportReport> {
+  return invoke<NativeViewportReport>("native_viewport_set_rect", { request });
+}
+
+export function sendNativeViewportInput(
+  request: NativeViewportInput,
+): Promise<NativeViewportReport> {
+  return invoke<NativeViewportReport>("native_viewport_input", { request });
+}
+
+export function pickNativeViewport(
+  x: number,
+  y: number,
+): Promise<NativeViewportPickReport> {
+  return invoke<NativeViewportPickReport>("native_viewport_pick", {
+    request: { x, y },
+  });
+}
+
+export function selectNativeViewportNode(
+  nodeIndex: number | null,
+): Promise<NativeViewportReport> {
+  return invoke<NativeViewportReport>("native_viewport_select", {
+    request: { nodeIndex },
+  });
+}
+
+export function setNativeViewportProjection(
+  projection: NativeViewportProjection,
+): Promise<NativeViewportReport> {
+  return invoke<NativeViewportReport>("native_viewport_set_projection", {
+    request: { projection },
+  });
+}
+
+export function setNativeViewportOverlays(
+  grid: boolean,
+  wireframe: boolean,
+  bounds: boolean,
+): Promise<NativeViewportReport> {
+  return invoke<NativeViewportReport>("native_viewport_set_overlays", {
+    request: { grid, wireframe, bounds },
+  });
+}
+
+export function setNativeViewportVisible(visible: boolean): Promise<void> {
+  return invoke<void>("native_viewport_set_visible", {
+    request: { visible },
+  });
+}
+
+export function getNativeViewportStats(): Promise<NativeViewportReport> {
+  return invoke<NativeViewportReport>("native_viewport_stats");
+}
+
+export function shutdownNativeViewport(): Promise<void> {
+  return invoke<void>("native_viewport_shutdown");
+}
+
+export function getDebugThreeViewportBenchmarkSpec(): Promise<DebugThreeViewportBenchmarkSpec | null> {
+  return invoke<DebugThreeViewportBenchmarkSpec | null>(
+    "debug_three_viewport_benchmark_spec",
+  );
+}
+
+export function completeDebugThreeViewportBenchmark(
+  report: unknown,
+): Promise<void> {
+  return invoke<void>("debug_three_viewport_benchmark_complete", { report });
+}
+
+
 
 export function preflightWorkspaceExport(
   workspace: string,

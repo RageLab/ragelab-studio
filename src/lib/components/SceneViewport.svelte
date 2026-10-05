@@ -9,6 +9,10 @@
     SceneNodeReport,
   } from "$lib/native";
   import { previewViewModel, type ModelPreviewPayload } from "$lib/preview";
+  import {
+    EMPTY_THREE_VIEWPORT_METRICS,
+    type ThreeViewportMetrics,
+  } from "$lib/viewportMetrics";
 
   const REAL_GEOMETRY_NODE_LIMIT = 512;
 
@@ -22,6 +26,9 @@
   export let manifest: SceneManifestReport | null = null;
   export let previews: Record<number, AssetPreviewReport> = {};
   export let selectedNodeIndex: number | null = null;
+  export let metrics: ThreeViewportMetrics = {
+    ...EMPTY_THREE_VIEWPORT_METRICS,
+  };
 
   let container: HTMLDivElement;
   let renderer: THREE.WebGLRenderer | null = null;
@@ -45,6 +52,14 @@
   let sharedGeometryAssets = 0;
   let sharedDiffuseTextures = 0;
   let texturedMaterials = 0;
+  let sceneBuildMs = 0;
+  let averageFrameMs = 0;
+  let rendererGeometries = 0;
+  let rendererTextures = 0;
+  let sharedPayloadBytes = 0;
+  let frameSampleTotal = 0;
+  let frameSampleCount = 0;
+  let sampledFrames = 0;
   const sharedGeometryByAssetRef = new Map<number, SharedPreviewPrimitive[]>();
   const sharedTextureByKey = new Map<string, THREE.DataTexture>();
 
@@ -125,6 +140,7 @@
       return;
     }
 
+    const started = performance.now();
     clearGroup(proxyGroup);
     renderError = "";
     placedNodes = 0;
@@ -134,6 +150,14 @@
     sharedGeometryAssets = 0;
     sharedDiffuseTextures = 0;
     texturedMaterials = 0;
+    sharedPayloadBytes = 0;
+    sampledFrames = 0;
+    frameSampleTotal = 0;
+    frameSampleCount = 0;
+    averageFrameMs = 0;
+    rendererGeometries = 0;
+    rendererTextures = 0;
+    metrics = { ...EMPTY_THREE_VIEWPORT_METRICS };
 
     if (!manifest) {
       return;
@@ -170,6 +194,8 @@
 
     updateSelectionStyles();
     fitCamera(proxyGroup);
+    sceneBuildMs = performance.now() - started;
+    publishMetrics();
   }
 
   function buildResolvedAssetNode(
@@ -261,6 +287,9 @@
         new THREE.Float32BufferAttribute(positions, 3),
       );
       geometry.setIndex(primitive.geometry.indices);
+      sharedPayloadBytes +=
+        positions.length * Float32Array.BYTES_PER_ELEMENT +
+        primitive.geometry.indices.length * Uint32Array.BYTES_PER_ELEMENT;
 
       if (
         primitive.geometry.normals &&
@@ -274,6 +303,8 @@
           "normal",
           new THREE.Float32BufferAttribute(normals, 3),
         );
+        sharedPayloadBytes +=
+          normals.length * Float32Array.BYTES_PER_ELEMENT;
       } else {
         geometry.computeVertexNormals();
       }
@@ -287,6 +318,7 @@
           uv0.push(uv[0], uv[1]);
         }
         geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uv0, 2));
+        sharedPayloadBytes += uv0.length * Float32Array.BYTES_PER_ELEMENT;
       }
 
       shared.push({
@@ -359,6 +391,7 @@
     dataTexture.needsUpdate = true;
     sharedTextureByKey.set(key, dataTexture);
     sharedDiffuseTextures += 1;
+    sharedPayloadBytes += rgba.byteLength;
     return dataTexture;
   }
 
@@ -606,11 +639,39 @@
   }
 
   function animate() {
+    const started = performance.now();
     controls?.update();
     if (renderer && scene && camera) {
       renderer.render(scene, camera);
+      frameSampleTotal += performance.now() - started;
+      frameSampleCount += 1;
+      if (frameSampleCount >= 30) {
+        averageFrameMs = frameSampleTotal / frameSampleCount;
+        sampledFrames += frameSampleCount;
+        frameSampleTotal = 0;
+        frameSampleCount = 0;
+        rendererGeometries = renderer.info.memory.geometries;
+        rendererTextures = renderer.info.memory.textures;
+        publishMetrics();
+      }
     }
     animationFrame = window.requestAnimationFrame(animate);
+  }
+
+  function publishMetrics() {
+    metrics = {
+      sceneBuildMs,
+      averageFrameMs,
+      sampledFrames,
+      rendererGeometries,
+      rendererTextures,
+      sharedGeometryAssets,
+      sharedDiffuseTextures,
+      texturedMaterials,
+      realGeometryNodes,
+      fallbackProxyNodes,
+      payloadBytes: sharedPayloadBytes,
+    };
   }
 
   function cleanup() {
@@ -667,6 +728,11 @@
         <span>{texturedMaterials} textured materials</span>
         <span>{fallbackProxyNodes} proxy fallback</span>
         <span>{unplacedNodes} without transform</span>
+        <span>{sceneBuildMs.toFixed(1)} ms build</span>
+        <span>{averageFrameMs.toFixed(2)} ms frame</span>
+        <span>{rendererGeometries} WebGL geometries</span>
+        <span>{rendererTextures} WebGL textures</span>
+        <span>{(sharedPayloadBytes / (1024 * 1024)).toFixed(1)} MiB payload</span>
         {#if selectedNodeIndex !== null}
           <span>selected #{selectedNodeIndex}</span>
         {/if}
