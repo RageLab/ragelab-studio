@@ -15,8 +15,8 @@ use ragelab_engine::{
     WorldStreamConfig, WorldStreamReport, WorldStreamView, WorldStreamingRuntime,
 };
 use ragelab_render::{
-    CameraSnapshot, GpuCacheBudget, PickResult, Projection, SurfaceRenderer, ViewportOptions,
-    ViewportStats,
+    CameraSnapshot, GpuCacheBudget, PickResult, Projection, SurfaceRenderer, TransformGizmoMode,
+    ViewportOptions, ViewportStats,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, PhysicalPosition, PhysicalSize, Window, WindowEvent};
@@ -125,6 +125,12 @@ pub(crate) struct NativeViewportOverlaysRequest {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct NativeViewportGizmoRequest {
+    mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct NativeViewportVisibleRequest {
     visible: bool,
 }
@@ -203,6 +209,10 @@ struct ActiveWorldStream {
 
 enum RenderCommand {
     Load {
+        package: Box<RenderPackage>,
+        reply: Sender<Result<NativeViewportReport, String>>,
+    },
+    UpdatePackage {
         package: Box<RenderPackage>,
         reply: Sender<Result<NativeViewportReport, String>>,
     },
@@ -301,6 +311,10 @@ enum RenderCommand {
         grid: bool,
         wireframe: bool,
         bounds: bool,
+        reply: Sender<Result<NativeViewportReport, String>>,
+    },
+    Gizmo {
+        mode: Option<TransformGizmoMode>,
         reply: Sender<Result<NativeViewportReport, String>>,
     },
     Stats {
@@ -631,9 +645,27 @@ pub(crate) fn native_viewport_load_scene(
     request: WorkspaceSceneRequest,
 ) -> Result<NativeViewportReport, String> {
     let package = build_workspace_render_package(&request)?;
+    load_render_package(&state, package)
+}
 
-    with_runtime(&state, |runtime| {
+pub(crate) fn load_render_package(
+    state: &tauri::State<'_, NativeViewportState>,
+    package: RenderPackage,
+) -> Result<NativeViewportReport, String> {
+    with_runtime(state, |runtime| {
         request_report(&runtime.sender, |reply| RenderCommand::Load {
+            package: Box::new(package),
+            reply,
+        })
+    })
+}
+
+pub(crate) fn update_render_package(
+    state: &tauri::State<'_, NativeViewportState>,
+    package: RenderPackage,
+) -> Result<NativeViewportReport, String> {
+    with_runtime(state, |runtime| {
+        request_report(&runtime.sender, |reply| RenderCommand::UpdatePackage {
             package: Box::new(package),
             reply,
         })
@@ -765,9 +797,16 @@ pub(crate) fn native_viewport_world_set_workspace_overlay(
     request: WorkspaceSceneRequest,
 ) -> Result<NativeViewportReport, String> {
     let package = build_workspace_render_package(&request)?;
-    with_runtime(&state, |runtime| {
+    set_world_overlay_packages(&state, vec![package])
+}
+
+pub(crate) fn set_world_overlay_packages(
+    state: &tauri::State<'_, NativeViewportState>,
+    packages: Vec<RenderPackage>,
+) -> Result<NativeViewportReport, String> {
+    with_runtime(state, |runtime| {
         request_report(&runtime.sender, |reply| RenderCommand::SetWorldOverlays {
-            packages: vec![package],
+            packages,
             reply,
         })
     })
@@ -1002,6 +1041,28 @@ pub(crate) fn native_viewport_set_overlays(
 }
 
 #[tauri::command]
+pub(crate) fn native_viewport_set_gizmo(
+    state: tauri::State<'_, NativeViewportState>,
+    request: NativeViewportGizmoRequest,
+) -> Result<NativeViewportReport, String> {
+    let mode = request
+        .mode
+        .as_deref()
+        .map(|value| {
+            TransformGizmoMode::parse(value).ok_or_else(|| {
+                "Native viewport gizmo mode must be translate, rotate, scale or null".to_string()
+            })
+        })
+        .transpose()?;
+    with_runtime(&state, |runtime| {
+        request_report(&runtime.sender, |reply| RenderCommand::Gizmo {
+            mode,
+            reply,
+        })
+    })
+}
+
+#[tauri::command]
 pub(crate) fn native_viewport_set_visible(
     state: tauri::State<'_, NativeViewportState>,
     request: NativeViewportVisibleRequest,
@@ -1135,6 +1196,21 @@ fn render_thread(
                         report(&renderer, None)
                     })
                     .map_err(|error| error.to_string());
+                let _ = reply.send(result);
+            }
+            RenderCommand::UpdatePackage { package, reply } => {
+                streaming = None;
+                let result = if has_scene {
+                    renderer.update_streaming_package(*package)
+                } else {
+                    renderer.set_package(*package)
+                }
+                .and_then(|_| renderer.render_frame())
+                .map(|_| {
+                    has_scene = true;
+                    report(&renderer, None)
+                })
+                .map_err(|error| error.to_string());
                 let _ = reply.send(result);
             }
             RenderCommand::StartWorldStream {
@@ -1415,6 +1491,10 @@ fn render_thread(
                 reply,
             } => {
                 renderer.set_overlays(grid, wireframe, bounds);
+                send_after_render(&mut renderer, has_scene, streaming.as_ref(), reply);
+            }
+            RenderCommand::Gizmo { mode, reply } => {
+                renderer.set_gizmo_mode(mode);
                 send_after_render(&mut renderer, has_scene, streaming.as_ref(), reply);
             }
             RenderCommand::Stats { reply } => {

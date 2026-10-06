@@ -2817,7 +2817,7 @@ dependencies = [
 [[package]]
 name = "ragelab-assets"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=46b7e4ad751b93b6242682d6afb03d06e9d92a49#46b7e4ad751b93b6242682d6afb03d06e9d92a49"
+source = "git+https://github.com/RageLab/ragelab.git?rev=5a941f25edc2c9e0c17e00563d85a8d1e515ebcd#5a941f25edc2c9e0c17e00563d85a8d1e515ebcd"
 dependencies = [
  "ragelab-hash",
  "ragelab-meta",
@@ -2832,12 +2832,13 @@ dependencies = [
 [[package]]
 name = "ragelab-engine"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=46b7e4ad751b93b6242682d6afb03d06e9d92a49#46b7e4ad751b93b6242682d6afb03d06e9d92a49"
+source = "git+https://github.com/RageLab/ragelab.git?rev=5a941f25edc2c9e0c17e00563d85a8d1e515ebcd#5a941f25edc2c9e0c17e00563d85a8d1e515ebcd"
 dependencies = [
  "base64 0.22.1",
  "bincode",
  "ragelab-assets",
  "ragelab-hash",
+ "ragelab-meta",
  "ragelab-resource",
  "ragelab-rpf",
  "ragelab-ybn",
@@ -2856,12 +2857,12 @@ dependencies = [
 [[package]]
 name = "ragelab-hash"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=46b7e4ad751b93b6242682d6afb03d06e9d92a49#46b7e4ad751b93b6242682d6afb03d06e9d92a49"
+source = "git+https://github.com/RageLab/ragelab.git?rev=5a941f25edc2c9e0c17e00563d85a8d1e515ebcd#5a941f25edc2c9e0c17e00563d85a8d1e515ebcd"
 
 [[package]]
 name = "ragelab-meta"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=46b7e4ad751b93b6242682d6afb03d06e9d92a49#46b7e4ad751b93b6242682d6afb03d06e9d92a49"
+source = "git+https://github.com/RageLab/ragelab.git?rev=5a941f25edc2c9e0c17e00563d85a8d1e515ebcd#5a941f25edc2c9e0c17e00563d85a8d1e515ebcd"
 dependencies = [
  "ragelab-resource",
 ]
@@ -2869,17 +2870,17 @@ dependencies = [
 [[package]]
 name = "ragelab-pso"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=46b7e4ad751b93b6242682d6afb03d06e9d92a49#46b7e4ad751b93b6242682d6afb03d06e9d92a49"
+source = "git+https://github.com/RageLab/ragelab.git?rev=5a941f25edc2c9e0c17e00563d85a8d1e515ebcd#5a941f25edc2c9e0c17e00563d85a8d1e515ebcd"
 
 [[package]]
 name = "ragelab-rbf"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=46b7e4ad751b93b6242682d6afb03d06e9d92a49#46b7e4ad751b93b6242682d6afb03d06e9d92a49"
+source = "git+https://github.com/RageLab/ragelab.git?rev=5a941f25edc2c9e0c17e00563d85a8d1e515ebcd#5a941f25edc2c9e0c17e00563d85a8d1e515ebcd"
 
 [[package]]
 name = "ragelab-render"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=46b7e4ad751b93b6242682d6afb03d06e9d92a49#46b7e4ad751b93b6242682d6afb03d06e9d92a49"
+source = "git+https://github.com/RageLab/ragelab.git?rev=5a941f25edc2c9e0c17e00563d85a8d1e515ebcd#5a941f25edc2c9e0c17e00563d85a8d1e515ebcd"
 dependencies = [
  "bytemuck",
  "glam",
@@ -2896,7 +2897,7 @@ dependencies = [
 [[package]]
 name = "ragelab-resource"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=46b7e4ad751b93b6242682d6afb03d06e9d92a49#46b7e4ad751b93b6242682d6afb03d06e9d92a49"
+source = "git+https://github.com/RageLab/ragelab.git?rev=5a941f25edc2c9e0c17e00563d85a8d1e515ebcd#5a941f25edc2c9e0c17e00563d85a8d1e515ebcd"
 dependencies = [
  "flate2",
 ]
@@ -2904,7 +2905,7 @@ dependencies = [
 [[package]]
 name = "ragelab-rpf"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=46b7e4ad751b93b6242682d6afb03d06e9d92a49#46b7e4ad751b93b6242682d6afb03d06e9d92a49"
+source = "git+https://github.com/RageLab/ragelab.git?rev=5a941f25edc2c9e0c17e00563d85a8d1e515ebcd#5a941f25edc2c9e0c17e00563d85a8d1e515ebcd"
 dependencies = [
  "flate2",
  "rage-rpf",
@@ -2928,7 +2929,7 @@ dependencies = [
 [[package]]
 name = "ragelab-ybn"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=46b7e4ad751b93b6242682d6afb03d06e9d92a49#46b7e4ad751b93b6242682d6afb03d06e9d92a49"
+source = "git+https://github.com/RageLab/ragelab.git?rev=5a941f25edc2c9e0c17e00563d85a8d1e515ebcd#5a941f25edc2c9e0c17e00563d85a8d1e515ebcd"
 dependencies = [
  "ragelab-resource",
 ]
@@ -2936,7 +2937,7 @@ dependencies = [
 [[package]]
 name = "ragelab-ydd"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=46b7e4ad751b93b6242682d6afb03d06e9d92a49#46b7e4ad751b93b6242682d6afb03d06e9d92a49"
+source = "git+https://github.com/RageLab/ragelab.git?rev=5a941f25edc2c9e0c17e00563d85a8d1e515ebcd#5a941f25edc2c9e0c17e00563d85a8d1e515ebcd"
 dependencies = [
  "ragelab-resource",
  "ragelab-ydr",
@@ -2945,7 +2946,7 @@ dependencies = [
 [[package]]
 name = "ragelab-ydr"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=46b7e4ad751b93b6242682d6afb03d06e9d92a49#46b7e4ad751b93b6242682d6afb03d06e9d92a49"
+source = "git+https://github.com/RageLab/ragelab.git?rev=5a941f25edc2c9e0c17e00563d85a8d1e515ebcd#5a941f25edc2c9e0c17e00563d85a8d1e515ebcd"
 dependencies = [
  "ragelab-resource",
  "ragelab-ytd",
@@ -2954,7 +2955,7 @@ dependencies = [
 [[package]]
 name = "ragelab-yft"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=46b7e4ad751b93b6242682d6afb03d06e9d92a49#46b7e4ad751b93b6242682d6afb03d06e9d92a49"
+source = "git+https://github.com/RageLab/ragelab.git?rev=5a941f25edc2c9e0c17e00563d85a8d1e515ebcd#5a941f25edc2c9e0c17e00563d85a8d1e515ebcd"
 dependencies = [
  "ragelab-resource",
  "ragelab-ydr",
@@ -2963,7 +2964,7 @@ dependencies = [
 [[package]]
 name = "ragelab-ymap"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=46b7e4ad751b93b6242682d6afb03d06e9d92a49#46b7e4ad751b93b6242682d6afb03d06e9d92a49"
+source = "git+https://github.com/RageLab/ragelab.git?rev=5a941f25edc2c9e0c17e00563d85a8d1e515ebcd#5a941f25edc2c9e0c17e00563d85a8d1e515ebcd"
 dependencies = [
  "ragelab-hash",
  "ragelab-meta",
@@ -2973,7 +2974,7 @@ dependencies = [
 [[package]]
 name = "ragelab-ymf"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=46b7e4ad751b93b6242682d6afb03d06e9d92a49#46b7e4ad751b93b6242682d6afb03d06e9d92a49"
+source = "git+https://github.com/RageLab/ragelab.git?rev=5a941f25edc2c9e0c17e00563d85a8d1e515ebcd#5a941f25edc2c9e0c17e00563d85a8d1e515ebcd"
 dependencies = [
  "ragelab-meta",
  "ragelab-pso",
@@ -2982,7 +2983,7 @@ dependencies = [
 [[package]]
 name = "ragelab-ytd"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=46b7e4ad751b93b6242682d6afb03d06e9d92a49#46b7e4ad751b93b6242682d6afb03d06e9d92a49"
+source = "git+https://github.com/RageLab/ragelab.git?rev=5a941f25edc2c9e0c17e00563d85a8d1e515ebcd#5a941f25edc2c9e0c17e00563d85a8d1e515ebcd"
 dependencies = [
  "ragelab-hash",
  "ragelab-resource",
@@ -2991,7 +2992,7 @@ dependencies = [
 [[package]]
 name = "ragelab-ytyp"
 version = "0.1.0"
-source = "git+https://github.com/RageLab/ragelab.git?rev=46b7e4ad751b93b6242682d6afb03d06e9d92a49#46b7e4ad751b93b6242682d6afb03d06e9d92a49"
+source = "git+https://github.com/RageLab/ragelab.git?rev=5a941f25edc2c9e0c17e00563d85a8d1e515ebcd#5a941f25edc2c9e0c17e00563d85a8d1e515ebcd"
 dependencies = [
  "ragelab-hash",
  "ragelab-meta",

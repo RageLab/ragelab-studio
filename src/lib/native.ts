@@ -344,7 +344,94 @@ export interface NativeViewportSceneRequest {
   maxNodes?: number;
 }
 
+export interface YmapAuthoringReport {
+  schema: "ragelab.ymap.authoring";
+  schemaVersion: number;
+  source: string;
+  savedOutput: string | null;
+  revision: number;
+  entities: number;
+  dirty: boolean;
+  undoDepth: number;
+  redoDepth: number;
+  sourceConflict: boolean;
+}
+
+export interface YmapAuthoringEntity {
+  index: number;
+  archetypeHash: number;
+  position: [number, number, number];
+  rotation: [number, number, number, number];
+  scaleXy: number | null;
+  scaleZ: number | null;
+  flags: number;
+  parentIndex: number | null;
+}
+
+export interface YmapAuthoringSnapshot {
+  report: YmapAuthoringReport;
+  entities: YmapAuthoringEntity[];
+  manifest: SceneManifestReport;
+}
+
+export interface YmapAuthoringSaveResult {
+  schema: "ragelab.ymap.authoring";
+  schemaVersion: number;
+  source: string;
+  output: string;
+  bytesWritten: number;
+  entities: number;
+  revision: number;
+  semanticReopen: boolean;
+  sourceUnchanged: boolean;
+  dirty: boolean;
+}
+
+export interface YmapAuthoringSaveResponse {
+  save: YmapAuthoringSaveResult;
+  snapshot: YmapAuthoringSnapshot;
+}
+
+export type YmapAuthoringEditCommand =
+  | {
+      type: "setTransform";
+      index: number;
+      position: [number, number, number];
+      rotation: [number, number, number, number];
+      scaleXy: number | null;
+      scaleZ: number | null;
+    }
+  | {
+      type: "setProperties";
+      index: number;
+      archetypeHash?: number;
+      flags?: number;
+      parentIndex?: number;
+      clearParent?: boolean;
+    }
+  | {
+      type: "delete";
+      indices: number[];
+    }
+  | {
+      type: "duplicate";
+      indices: number[];
+      translation: [number, number, number];
+    }
+  | {
+      type: "create";
+      templateIndex: number;
+      archetypeHash: number;
+      position: [number, number, number];
+      rotation: [number, number, number, number];
+      scaleXy: number | null;
+      scaleZ: number | null;
+      flags: number;
+      parentIndex: number | null;
+    };
+
 export type NativeViewportProjection = "perspective" | "orthographic";
+export type NativeViewportGizmoMode = "translate" | "rotate" | "scale";
 
 export interface NativeViewportCamera {
   target: [number, number, number];
@@ -841,6 +928,69 @@ export function loadNativeViewportScene(
   });
 }
 
+function normalizeAuthoringSceneRequest(request: NativeViewportSceneRequest) {
+  return {
+    workspace: request.workspace,
+    ymap: request.ymap,
+    fallbackRoots: request.fallbackRoots ?? [],
+    rpfMounts: request.rpfMounts ?? [],
+    gameIndex: request.gameIndex ?? null,
+    maxNodes: request.maxNodes,
+  };
+}
+
+export function openYmapAuthoring(
+  request: NativeViewportSceneRequest,
+): Promise<YmapAuthoringSnapshot> {
+  return invoke<YmapAuthoringSnapshot>("authoring_open", {
+    request: normalizeAuthoringSceneRequest(request),
+  });
+}
+
+export function getYmapAuthoringSnapshot(): Promise<YmapAuthoringSnapshot> {
+  return invoke<YmapAuthoringSnapshot>("authoring_snapshot");
+}
+
+export function applyYmapAuthoring(
+  commands: YmapAuthoringEditCommand[],
+): Promise<YmapAuthoringSnapshot> {
+  return invoke<YmapAuthoringSnapshot>("authoring_apply", {
+    request: { commands },
+  });
+}
+
+export function undoYmapAuthoring(): Promise<YmapAuthoringSnapshot> {
+  return invoke<YmapAuthoringSnapshot>("authoring_undo");
+}
+
+export function redoYmapAuthoring(): Promise<YmapAuthoringSnapshot> {
+  return invoke<YmapAuthoringSnapshot>("authoring_redo");
+}
+
+export function revertYmapAuthoring(): Promise<YmapAuthoringSnapshot> {
+  return invoke<YmapAuthoringSnapshot>("authoring_revert");
+}
+
+export function saveYmapAuthoringAs(
+  output: string,
+): Promise<YmapAuthoringSaveResponse> {
+  return invoke<YmapAuthoringSaveResponse>("authoring_save_as", {
+    request: { output },
+  });
+}
+
+export function previewYmapAuthoring(): Promise<NativeViewportReport> {
+  return invoke<NativeViewportReport>("authoring_preview");
+}
+
+export function previewYmapAuthoringWorldOverlay(): Promise<NativeViewportReport> {
+  return invoke<NativeViewportReport>("authoring_preview_world_overlay");
+}
+
+export function closeYmapAuthoring(): Promise<void> {
+  return invoke<void>("authoring_close");
+}
+
 export function startNativeWorldStream(
   request: NativeWorldStreamStartRequest,
 ): Promise<NativeViewportReport> {
@@ -972,6 +1122,14 @@ export function setNativeViewportOverlays(
 ): Promise<NativeViewportReport> {
   return invoke<NativeViewportReport>("native_viewport_set_overlays", {
     request: { grid, wireframe, bounds },
+  });
+}
+
+export function setNativeViewportGizmo(
+  mode: NativeViewportGizmoMode | null,
+): Promise<NativeViewportReport> {
+  return invoke<NativeViewportReport>("native_viewport_set_gizmo", {
+    request: { mode },
   });
 }
 
@@ -1168,6 +1326,23 @@ export async function chooseOperationOutput(
   const selected = await save({
     title: "Choose non-destructive output",
     defaultPath,
+  });
+
+  return typeof selected === "string" ? selected : null;
+}
+
+export async function chooseYmapAuthoringOutput(
+  defaultPath?: string,
+): Promise<string | null> {
+  const selected = await save({
+    title: "Save edited YMAP as",
+    defaultPath,
+    filters: [
+      {
+        name: "YMAP",
+        extensions: ["ymap"],
+      },
+    ],
   });
 
   return typeof selected === "string" ? selected : null;

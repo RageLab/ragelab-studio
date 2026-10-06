@@ -17,22 +17,28 @@ use ragelab_engine::{
 };
 use serde::{Deserialize, Serialize};
 
+mod authoring;
 mod native_viewport;
 
+use authoring::{
+    authoring_apply, authoring_close, authoring_open, authoring_preview,
+    authoring_preview_world_overlay, authoring_redo, authoring_revert, authoring_save_as,
+    authoring_snapshot, authoring_undo, AuthoringState,
+};
 use native_viewport::{
     debug_three_viewport_benchmark_complete, debug_three_viewport_benchmark_spec,
     native_viewport_create, native_viewport_focus_node, native_viewport_input,
     native_viewport_isolate_node, native_viewport_load_scene, native_viewport_pick,
-    native_viewport_select, native_viewport_set_layer_visibility, native_viewport_set_node_visible,
-    native_viewport_set_overlays, native_viewport_set_projection, native_viewport_set_rect,
-    native_viewport_set_visible, native_viewport_show_all_nodes, native_viewport_shutdown,
-    native_viewport_start_world_stream, native_viewport_stats, native_viewport_stop_world_stream,
-    native_viewport_world_clear_overlays, native_viewport_world_search,
-    native_viewport_world_set_workspace_overlay, native_viewport_world_stream_at,
-    NativeViewportState,
+    native_viewport_select, native_viewport_set_gizmo, native_viewport_set_layer_visibility,
+    native_viewport_set_node_visible, native_viewport_set_overlays, native_viewport_set_projection,
+    native_viewport_set_rect, native_viewport_set_visible, native_viewport_show_all_nodes,
+    native_viewport_shutdown, native_viewport_start_world_stream, native_viewport_stats,
+    native_viewport_stop_world_stream, native_viewport_world_clear_overlays,
+    native_viewport_world_search, native_viewport_world_set_workspace_overlay,
+    native_viewport_world_stream_at, NativeViewportState,
 };
 
-const RAGELAB_CORE_REVISION: &str = "46b7e4ad751b93b6242682d6afb03d06e9d92a49";
+const RAGELAB_CORE_REVISION: &str = "5a941f25edc2c9e0c17e00563d85a8d1e515ebcd";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -630,6 +636,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(NativeViewportState::default())
+        .manage(AuthoringState::default())
         .setup(|app| {
             #[cfg(debug_assertions)]
             {
@@ -656,6 +663,16 @@ pub fn run() {
             core_asset_preview,
             core_workspace_scene,
             core_workspace_scene_asset_preview,
+            authoring_open,
+            authoring_snapshot,
+            authoring_apply,
+            authoring_undo,
+            authoring_redo,
+            authoring_revert,
+            authoring_save_as,
+            authoring_preview,
+            authoring_preview_world_overlay,
+            authoring_close,
             native_viewport_create,
             native_viewport_load_scene,
             native_viewport_start_world_stream,
@@ -675,6 +692,7 @@ pub fn run() {
             native_viewport_set_layer_visibility,
             native_viewport_set_projection,
             native_viewport_set_overlays,
+            native_viewport_set_gizmo,
             native_viewport_set_visible,
             native_viewport_stats,
             native_viewport_shutdown,

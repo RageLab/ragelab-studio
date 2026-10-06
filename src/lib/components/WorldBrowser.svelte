@@ -24,6 +24,9 @@
   export let gameIndex: SceneGameIndexSource;
   export let workspacePath: string | null = null;
   export let workspaceYmap: string | null = null;
+  export let onPlaceArchetype:
+    | ((hash: number, position: [number, number, number] | null) => Promise<void> | void)
+    | null = null;
   export let initialPosition: [number, number, number] = [215, -810, 30];
 
   type BrowserLocation = {
@@ -196,6 +199,19 @@
       setError(error);
     } finally {
       searchLoading = false;
+    }
+  }
+
+  async function placeSearchResult(result: NativeWorldSearchResult) {
+    if (result.kind !== "archetype" || !onPlaceArchetype) return;
+    const point = result.position ?? report?.streaming?.position ?? null;
+    const position = point
+      ? ([point.x, point.y, point.z] as [number, number, number])
+      : null;
+    try {
+      await onPlaceArchetype(result.hash, position);
+    } catch (error) {
+      setError(error);
     }
   }
 
@@ -518,7 +534,12 @@
           <dt>YMAP</dt><dd><code>{hashHex(selectedSearchResult.mapHash)}</code></dd>
           <dt>Entity</dt><dd>{selectedSearchResult.entityIndex ?? "—"}</dd>
         </dl>
-        <button type="button" disabled={!selectedSearchResult.position && !selectedSearchResult.bounds} onclick={() => void jumpToResult(selectedSearchResult!)}>Jump / teleport</button>
+        <div class="entity-actions">
+          <button type="button" disabled={!selectedSearchResult.position && !selectedSearchResult.bounds} onclick={() => void jumpToResult(selectedSearchResult!)}>Jump / teleport</button>
+          {#if workspaceYmap && onPlaceArchetype && selectedSearchResult.kind === "archetype"}
+            <button type="button" onclick={() => void placeSearchResult(selectedSearchResult!)}>Place in workspace YMAP</button>
+          {/if}
+        </div>
       {:else}
         <p class="empty">Pick an entity, choose a hierarchy row, or select a global search result.</p>
       {/if}

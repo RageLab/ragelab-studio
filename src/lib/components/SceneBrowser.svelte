@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AuthoringPanel from "$lib/components/AuthoringPanel.svelte";
   import NativeSceneViewport from "$lib/components/NativeSceneViewport.svelte";
   import SceneViewport from "$lib/components/SceneViewport.svelte";
   import WorldBrowser from "$lib/components/WorldBrowser.svelte";
@@ -17,6 +18,7 @@
     type SceneManifestReport,
     type SceneNodeReport,
     type SceneRpfMount,
+    type YmapAuthoringSnapshot,
   } from "$lib/native";
   import {
     loadSceneAssetPreviews,
@@ -61,6 +63,12 @@
   let viewportMode: "three" | "native" = "native";
   let nativeViewportError = "";
   let worldBrowserEnabled = false;
+  let authoringPanel: {
+    placeArchetype: (
+      archetypeHash: number,
+      position?: [number, number, number],
+    ) => Promise<void>;
+  } | null = null;
   let threeMetrics: ThreeViewportMetrics = {
     ...EMPTY_THREE_VIEWPORT_METRICS,
   };
@@ -648,6 +656,26 @@
     selectedNodeIndex = node.index;
   }
 
+  function handleAuthoringSnapshot(snapshot: YmapAuthoringSnapshot) {
+    manifest = snapshot.manifest;
+    if (
+      selectedNodeIndex !== null &&
+      !snapshot.manifest.nodes.some((node) => node.index === selectedNodeIndex)
+    ) {
+      selectedNodeIndex = null;
+    }
+  }
+
+  async function placeArchetypeFromWorld(
+    archetypeHash: number,
+    position: [number, number, number] | null,
+  ) {
+    if (!authoringPanel) {
+      throw new Error("Open a workspace YMAP scene before placing an archetype.");
+    }
+    await authoringPanel.placeArchetype(archetypeHash, position ?? undefined);
+  }
+
   function errorMessageFor(error: unknown, fallback: string): string {
     return error instanceof Error && error.message ? error.message : fallback;
   }
@@ -740,6 +768,7 @@
       gameIndex={gameIndexSource}
       {workspacePath}
       workspaceYmap={ymapPath}
+      onPlaceArchetype={placeArchetypeFromWorld}
     />
   {/if}
 
@@ -986,6 +1015,29 @@
             </div>
             <span>{unresolvedNodes.length} unresolved</span>
           </div>
+
+          {#if
+            viewportMode === "native" &&
+            activeWorkspacePath &&
+            ymapPath &&
+            manifest
+          }
+            <AuthoringPanel
+              bind:this={authoringPanel}
+              scene={{
+                workspace: activeWorkspacePath,
+                ymap: ymapPath,
+                fallbackRoots: fallbackRoot ? [fallbackRoot] : [],
+                rpfMounts,
+                gameIndex: gameIndexSource,
+                maxNodes: maxNodes.trim() ? Number.parseInt(maxNodes, 10) : undefined,
+              }}
+              {manifest}
+              worldBrowserActive={worldBrowserEnabled}
+              bind:selectedNodeIndex
+              onSnapshot={handleAuthoringSnapshot}
+            />
+          {/if}
 
           {#if selectedNode}
             <div class="node-details">
