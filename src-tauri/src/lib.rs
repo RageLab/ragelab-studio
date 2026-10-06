@@ -1,19 +1,20 @@
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
 };
 
 use ragelab_engine::{
     apply_operation_document, asset_capabilities, discover_fivem_legacy, discover_gta_v_legacy,
-    inspect_asset, plan_operation_document, prepare_gta_rpf_index, prepare_gta_rpf_keys,
-    preview_asset, workspace_export_preflight_report, workspace_export_report,
-    workspace_scene_asset_preview_with_game_index, workspace_scene_report_with_game_index,
-    AssetCapabilitiesReport, AssetInspectionReport, AssetPreviewReport, CatalogRefs,
-    FiveMDiscoveryReport, GtaRpfIndexCacheReport, GtaRpfKeyCacheReport, GtaVDiscoveryReport,
-    OperationApplyResult, OperationDocument, OperationPlan, PreviewOptions, SceneAssemblyOptions,
-    SceneAssetPreviewSources, SceneGameIndexSource, SceneManifestReport, SceneRpfMount,
-    SharedExportOptions, WorkspaceExportPreflightReport, WorkspaceExportReport,
-    MAX_SCENE_NODE_LIMIT,
+    export_ytd_texture_png, inspect_asset, plan_operation_document, prepare_gta_rpf_index,
+    prepare_gta_rpf_keys, preview_asset, workspace_export_preflight_report,
+    workspace_export_report, workspace_scene_asset_preview_with_game_index,
+    workspace_scene_report_with_game_index, AssetCapabilitiesReport, AssetInspectionReport,
+    AssetPreviewReport, CatalogRefs, FiveMDiscoveryReport, GtaRpfIndexCacheReport,
+    GtaRpfKeyCacheReport, GtaVDiscoveryReport, OperationApplyResult, OperationDocument,
+    OperationPlan, PreviewOptions, SceneAssemblyOptions, SceneAssetPreviewSources,
+    SceneGameIndexSource, SceneManifestReport, SceneRpfMount, SharedExportOptions,
+    WorkspaceExportPreflightReport, WorkspaceExportReport, MAX_SCENE_NODE_LIMIT,
 };
 use serde::{Deserialize, Serialize};
 
@@ -38,7 +39,7 @@ use native_viewport::{
     native_viewport_world_stream_at, NativeViewportState,
 };
 
-const RAGELAB_CORE_REVISION: &str = "5a941f25edc2c9e0c17e00563d85a8d1e515ebcd";
+const RAGELAB_CORE_REVISION: &str = "0b7a83afadb04ebe5e7ca6e1973411c2f611ea70";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,6 +60,22 @@ struct PrepareGtaRpfKeysRequest {
 struct PrepareGtaRpfIndexRequest {
     game_root: String,
     keys: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct YtdTexturePngExportRequest {
+    path: String,
+    texture_index: usize,
+    output: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct YtdTexturePngExportReport {
+    output: String,
+    bytes_written: usize,
+    source_unchanged: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -280,6 +297,62 @@ fn core_asset_inspect(path: String) -> Result<AssetInspectionReport, String> {
 #[tauri::command]
 fn core_asset_capabilities(path: String) -> Result<AssetCapabilitiesReport, String> {
     asset_capabilities(Path::new(&path)).map_err(core_error)
+}
+
+#[tauri::command]
+fn core_ytd_export_png(
+    request: YtdTexturePngExportRequest,
+) -> Result<YtdTexturePngExportReport, String> {
+    let source = PathBuf::from(&request.path);
+    let output = PathBuf::from(&request.output);
+    if !source.is_absolute() || !source.is_file() {
+        return Err(format!(
+            "Studio YTD PNG source must be an absolute file path: {}",
+            source.display()
+        ));
+    }
+    if !output.is_absolute() {
+        return Err("Studio YTD PNG output must be an absolute path".into());
+    }
+    if source == output {
+        return Err("Studio YTD PNG output must differ from the source path".into());
+    }
+    if output.exists() {
+        return Err(format!(
+            "Studio YTD PNG output already exists: {}",
+            output.display()
+        ));
+    }
+    let parent = output
+        .parent()
+        .ok_or_else(|| "Studio YTD PNG output must have a parent directory".to_string())?;
+    if !parent.is_dir() {
+        return Err(format!(
+            "Studio YTD PNG output parent is not a directory: {}",
+            parent.display()
+        ));
+    }
+
+    let source_bytes = fs::read(&source).map_err(core_error)?;
+    let png = export_ytd_texture_png(&source_bytes, request.texture_index).map_err(core_error)?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&output)
+        .map_err(core_error)?;
+    file.write_all(&png).map_err(core_error)?;
+    file.sync_all().map_err(core_error)?;
+
+    let source_unchanged = fs::read(&source).map_err(core_error)? == source_bytes;
+    if !source_unchanged {
+        return Err("YTD source changed during read-only PNG export".into());
+    }
+
+    Ok(YtdTexturePngExportReport {
+        output: output.display().to_string(),
+        bytes_written: png.len(),
+        source_unchanged,
+    })
 }
 
 #[tauri::command]
@@ -660,6 +733,7 @@ pub fn run() {
             core_prepare_gta_rpf_index,
             core_asset_inspect,
             core_asset_capabilities,
+            core_ytd_export_png,
             core_asset_preview,
             core_workspace_scene,
             core_workspace_scene_asset_preview,

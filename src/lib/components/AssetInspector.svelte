@@ -1,6 +1,7 @@
 <script lang="ts">
   import DeclarativeEditor from "$lib/components/DeclarativeEditor.svelte";
   import PreviewViewport from "$lib/components/PreviewViewport.svelte";
+  import TextureMaterialAuthoring from "$lib/components/TextureMaterialAuthoring.svelte";
   import {
     chooseAssetFile,
     getAssetCapabilities,
@@ -198,6 +199,11 @@
       <summary>Structured metadata</summary>
       <pre>{JSON.stringify(inspection.details, null, 2)}</pre>
     </details>
+
+    <TextureMaterialAuthoring
+      sourcePath={inspection.path}
+      details={inspection.details}
+    />
 
     {#if previewOperation}
       <section class="preview-controls">

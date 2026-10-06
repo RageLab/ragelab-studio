@@ -173,6 +173,112 @@ export interface AssetInspectionReport {
   details: unknown;
 }
 
+export interface TextureAuthoringExportCapability {
+  classicDdsFullMips: boolean;
+  pngTopMip: boolean;
+}
+
+export interface TextureAuthoringReplacementCapability {
+  layoutPreservingDds: boolean;
+  relocatedDds: boolean;
+  png: boolean;
+  dimensionChanges: boolean;
+  mipChainRegenerated: boolean;
+  targetFormatPreserved: boolean;
+  reason: string | null;
+}
+
+export interface TextureAuthoringEntry {
+  index: number;
+  name: string;
+  nameHash: string;
+  dictionaryHash: string;
+  dictionaryHashMatchesName: boolean;
+  width: number;
+  height: number;
+  depth: number;
+  mipLevels: number;
+  format: string;
+  formatRaw: string;
+  stride: number;
+  encodedBytes: number;
+  usage: number;
+  usageFlags: string;
+  extraFlags: string;
+  export: TextureAuthoringExportCapability;
+  replacement: TextureAuthoringReplacementCapability;
+}
+
+export interface TextureAuthoringReport {
+  schema: "ragelab.texture-authoring";
+  schemaVersion: number;
+  textureCount: number;
+  rules: string[];
+  textures: TextureAuthoringEntry[];
+}
+
+export type MaterialFieldMode = "inspectOnly" | "rebindExisting";
+
+export interface MaterialFieldPolicy {
+  field: string;
+  mode: MaterialFieldMode;
+  reason: string;
+}
+
+export interface MaterialTextureReference {
+  parameterHash: string;
+  textureName: string;
+  mode: MaterialFieldMode;
+}
+
+export interface MaterialShaderInspection {
+  index: number;
+  nameHash: string;
+  fileHash: string;
+  textureReferences: MaterialTextureReference[];
+}
+
+export interface MaterialTextureBinding {
+  shaderIndex: number;
+  parameterIndex: number;
+  parameterHash: string;
+  textureName: string;
+  mode: MaterialFieldMode;
+  targetScope: string;
+}
+
+export interface MaterialShaderBinding {
+  modelIndex: number;
+  geometryIndex: number;
+  shaderIndex: number;
+  mode: MaterialFieldMode;
+  targetScope: string;
+}
+
+export interface MaterialDrawableAuthoring {
+  drawableIndex: number | null;
+  drawableName: string;
+  drawableNameHash: string | null;
+  editSessionError: string | null;
+  shaders: MaterialShaderInspection[];
+  textureBindings: MaterialTextureBinding[];
+  shaderBindings: MaterialShaderBinding[];
+}
+
+export interface MaterialAuthoringReport {
+  schema: "ragelab.material-authoring";
+  schemaVersion: number;
+  assetType: "YDR" | "YDD";
+  fieldPolicy: MaterialFieldPolicy[];
+  drawables: MaterialDrawableAuthoring[];
+}
+
+export interface YtdTexturePngExportReport {
+  output: string;
+  bytesWritten: number;
+  sourceUnchanged: boolean;
+}
+
 export type AssetOperationAvailability =
   | "available"
   | "parameterized"
@@ -850,6 +956,20 @@ export function getAssetCapabilities(
   return invoke<AssetCapabilitiesReport>("core_asset_capabilities", { path });
 }
 
+export function exportYtdTexturePng(
+  path: string,
+  textureIndex: number,
+  output: string,
+): Promise<YtdTexturePngExportReport> {
+  return invoke<YtdTexturePngExportReport>("core_ytd_export_png", {
+    request: {
+      path,
+      textureIndex,
+      output,
+    },
+  });
+}
+
 export function previewAsset(
   path: string,
   options: CorePreviewOptions = {},
@@ -1326,6 +1446,23 @@ export async function chooseOperationOutput(
   const selected = await save({
     title: "Choose non-destructive output",
     defaultPath,
+  });
+
+  return typeof selected === "string" ? selected : null;
+}
+
+export async function chooseTexturePngOutput(
+  defaultPath?: string,
+): Promise<string | null> {
+  const selected = await save({
+    title: "Export texture top mip as PNG",
+    defaultPath,
+    filters: [
+      {
+        name: "PNG",
+        extensions: ["png"],
+      },
+    ],
   });
 
   return typeof selected === "string" ? selected : null;

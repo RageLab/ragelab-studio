@@ -12,6 +12,7 @@ export type EditableOperationId =
   | "ydd.rebind-shader"
   | "ytd.replace-dds"
   | "ytd.repack-dds"
+  | "ytd.repack-png"
   | "ytd.repack-rgba"
   | "ytd.rebuild-compact"
   | "ybn.edit-polygon";
@@ -97,6 +98,16 @@ const FORM_DEFINITIONS: Record<EditableOperationId, OperationFormDefinition> = {
     fields: [
       integerField("textureIndex", "Texture index"),
       fileField("replacement", "Replacement DDS"),
+    ],
+  },
+  "ytd.repack-png": {
+    id: "ytd.repack-png",
+    label: "Repack YTD PNG",
+    description:
+      "Decode a PNG through RageLab Core, preserve the proven Legacy target format, and regenerate the complete mip chain.",
+    fields: [
+      integerField("textureIndex", "Texture index"),
+      fileField("replacement", "Replacement PNG"),
     ],
   },
   "ytd.repack-rgba": {
@@ -248,6 +259,7 @@ export function buildOperationSpec(
       };
     case "ytd.replace-dds":
     case "ytd.repack-dds":
+    case "ytd.repack-png":
       return {
         type: definition.id,
         textureIndex: requiredInteger(values, "textureIndex"),
