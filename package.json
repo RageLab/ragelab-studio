@@ -12,6 +12,7 @@
     "prepare": "svelte-kit sync || echo ''",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+    "release:smoke": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/release-smoke.ps1",
     "tauri": "tauri"
   },
   "license": "Apache-2.0",

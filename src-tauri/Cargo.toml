@@ -19,8 +19,8 @@ tauri = { version = "2", features = ["unstable"] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-ragelab-engine = { git = "https://github.com/RageLab/ragelab.git", rev = "ce54a38559456114e07b938851d7a911d2a45412" }
-ragelab-render = { git = "https://github.com/RageLab/ragelab.git", rev = "ce54a38559456114e07b938851d7a911d2a45412" }
+ragelab-engine = { git = "https://github.com/RageLab/ragelab.git", rev = "cba6fd257526ceaa412c6b4bfacc6f3c2da314eb" }
+ragelab-render = { git = "https://github.com/RageLab/ragelab.git", rev = "cba6fd257526ceaa412c6b4bfacc6f3c2da314eb" }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

@@ -36,6 +36,7 @@ enum NativeViewportWindowMode {
 #[derive(Default)]
 pub(crate) struct NativeViewportState {
     runtime: Mutex<Option<NativeViewportRuntime>>,
+    smoke_active: AtomicBool,
 }
 
 struct NativeViewportRuntime {
@@ -331,6 +332,9 @@ pub(crate) async fn native_viewport_create(
     state: tauri::State<'_, NativeViewportState>,
     request: NativeViewportCreateRequest,
 ) -> Result<NativeViewportReport, String> {
+    if state.smoke_active.load(Ordering::Acquire) {
+        return Err("Native viewport is reserved by an active smoke run".into());
+    }
     create_native_viewport(app, state, request, NativeViewportWindowMode::Overlay).await
 }
 
@@ -1093,6 +1097,13 @@ pub(crate) fn native_viewport_stats(
 pub(crate) fn native_viewport_shutdown(
     state: tauri::State<'_, NativeViewportState>,
 ) -> Result<(), String> {
+    if state.smoke_active.load(Ordering::Acquire) {
+        return Err("Native viewport is reserved by an active smoke run".into());
+    }
+    shutdown_native_viewport(&state)
+}
+
+fn shutdown_native_viewport(state: &NativeViewportState) -> Result<(), String> {
     let runtime = state
         .runtime
         .lock()
@@ -1601,7 +1612,6 @@ async fn run_debug_open(app: &tauri::AppHandle, spec_path: &str) -> Result<(), S
     Ok(())
 }
 
-#[cfg(debug_assertions)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NativeViewportSmokeSpec {
@@ -1615,7 +1625,6 @@ struct NativeViewportSmokeSpec {
     collision: bool,
 }
 
-#[cfg(debug_assertions)]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct NativeViewportSmokeOutput {
@@ -1632,18 +1641,15 @@ struct NativeViewportSmokeOutput {
     error: Option<String>,
 }
 
-#[cfg(debug_assertions)]
 const fn smoke_width() -> u32 {
     960
 }
 
-#[cfg(debug_assertions)]
 const fn smoke_height() -> u32 {
     540
 }
 
-#[cfg(debug_assertions)]
-pub(crate) fn maybe_start_debug_smoke(app: tauri::AppHandle, core_revision: &'static str) {
+pub(crate) fn maybe_start_viewport_smoke(app: tauri::AppHandle, core_revision: &'static str) {
     let spec_path = std::env::var("RAGELAB_NATIVE_VIEWPORT_SMOKE")
         .ok()
         .or_else(|| {
@@ -1662,15 +1668,20 @@ pub(crate) fn maybe_start_debug_smoke(app: tauri::AppHandle, core_revision: &'st
         return;
     };
 
+    app.state::<NativeViewportState>()
+        .smoke_active
+        .store(true, Ordering::Release);
     tauri::async_runtime::spawn(async move {
-        let result = run_debug_smoke(&app, &spec_path, core_revision).await;
+        let result = run_viewport_smoke(&app, &spec_path, core_revision).await;
+        app.state::<NativeViewportState>()
+            .smoke_active
+            .store(false, Ordering::Release);
         let exit_code = if result { 0 } else { 1 };
         app.exit(exit_code);
     });
 }
 
-#[cfg(debug_assertions)]
-async fn run_debug_smoke(
+async fn run_viewport_smoke(
     app: &tauri::AppHandle,
     spec_path: &str,
     core_revision: &'static str,
@@ -1705,13 +1716,14 @@ async fn run_debug_smoke(
     };
 
     let smoke_result: Result<(), String> = async {
-        let created = native_viewport_create(
+        let created = create_native_viewport(
             app.clone(),
             app.state::<NativeViewportState>(),
             NativeViewportCreateRequest {
                 width: spec.width,
                 height: spec.height,
             },
+            NativeViewportWindowMode::Overlay,
         )
         .await?;
         output.created = Some(created);
@@ -1790,7 +1802,7 @@ async fn run_debug_smoke(
 
         let final_report = native_viewport_stats(app.state::<NativeViewportState>())?;
         output.final_report = Some(final_report);
-        native_viewport_shutdown(app.state::<NativeViewportState>())?;
+        shutdown_native_viewport(&app.state::<NativeViewportState>())?;
         Ok(())
     }
     .await;
@@ -1799,7 +1811,7 @@ async fn run_debug_smoke(
         Ok(()) => output.ok = true,
         Err(error) => {
             output.error = Some(error);
-            let _ = native_viewport_shutdown(app.state::<NativeViewportState>());
+            let _ = shutdown_native_viewport(&app.state::<NativeViewportState>());
         }
     }
 
@@ -1886,8 +1898,14 @@ pub(crate) fn maybe_start_debug_world_stream_smoke(
         return;
     };
 
+    app.state::<NativeViewportState>()
+        .smoke_active
+        .store(true, Ordering::Release);
     tauri::async_runtime::spawn(async move {
         let result = run_debug_world_stream_smoke(&app, &spec_path, core_revision).await;
+        app.state::<NativeViewportState>()
+            .smoke_active
+            .store(false, Ordering::Release);
         app.exit(if result { 0 } else { 1 });
     });
 }
@@ -1935,13 +1953,14 @@ async fn run_debug_world_stream_smoke(
             return Err("world stream smoke requires at least two points".into());
         }
 
-        native_viewport_create(
+        create_native_viewport(
             app.clone(),
             app.state::<NativeViewportState>(),
             NativeViewportCreateRequest {
                 width: spec.width,
                 height: spec.height,
             },
+            NativeViewportWindowMode::Overlay,
         )
         .await?;
 
@@ -2011,7 +2030,7 @@ async fn run_debug_world_stream_smoke(
             validate_native_world_browser_smoke(app, &spec, &mut output)?;
         }
 
-        native_viewport_shutdown(app.state::<NativeViewportState>())?;
+        shutdown_native_viewport(&app.state::<NativeViewportState>())?;
         Ok(())
     }
     .await;
@@ -2020,7 +2039,7 @@ async fn run_debug_world_stream_smoke(
         Ok(()) => output.ok = true,
         Err(error) => {
             output.error = Some(error);
-            let _ = native_viewport_shutdown(app.state::<NativeViewportState>());
+            let _ = shutdown_native_viewport(&app.state::<NativeViewportState>());
         }
     }
 

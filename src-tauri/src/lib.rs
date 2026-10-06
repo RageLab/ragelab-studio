@@ -39,7 +39,7 @@ use native_viewport::{
     native_viewport_world_stream_at, NativeViewportState,
 };
 
-const RAGELAB_CORE_REVISION: &str = "ce54a38559456114e07b938851d7a911d2a45412";
+const RAGELAB_CORE_REVISION: &str = "cba6fd257526ceaa412c6b4bfacc6f3c2da314eb";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -711,13 +711,13 @@ pub fn run() {
         .manage(NativeViewportState::default())
         .manage(AuthoringState::default())
         .setup(|app| {
+            native_viewport::maybe_start_viewport_smoke(
+                app.handle().clone(),
+                RAGELAB_CORE_REVISION,
+            );
             #[cfg(debug_assertions)]
             {
                 native_viewport::maybe_start_debug_open(app.handle().clone());
-                native_viewport::maybe_start_debug_smoke(
-                    app.handle().clone(),
-                    RAGELAB_CORE_REVISION,
-                );
                 native_viewport::maybe_start_debug_world_stream_smoke(
                     app.handle().clone(),
                     RAGELAB_CORE_REVISION,
