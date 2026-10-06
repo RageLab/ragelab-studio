@@ -1,6 +1,7 @@
 <script lang="ts">
   import NativeSceneViewport from "$lib/components/NativeSceneViewport.svelte";
   import SceneViewport from "$lib/components/SceneViewport.svelte";
+  import WorldBrowser from "$lib/components/WorldBrowser.svelte";
   import {
     assembleWorkspaceScene,
     completeDebugThreeViewportBenchmark,
@@ -59,6 +60,7 @@
   let sceneGeneration = 0;
   let viewportMode: "three" | "native" = "native";
   let nativeViewportError = "";
+  let worldBrowserEnabled = false;
   let threeMetrics: ThreeViewportMetrics = {
     ...EMPTY_THREE_VIEWPORT_METRICS,
   };
@@ -87,6 +89,7 @@
     gameIndexSource = null;
     gameIndexRoot = null;
     gameIndexMessage = "";
+    worldBrowserEnabled = false;
   }
 
   $: rpfMounts =
@@ -290,6 +293,25 @@
       throw error;
     } finally {
       gameIndexLoading = false;
+    }
+  }
+
+  async function toggleWorldBrowser() {
+    if (worldBrowserEnabled) {
+      worldBrowserEnabled = false;
+      return;
+    }
+    if (!gtaLegacyRoot) {
+      errorMessage = "Detect a valid GTA V Legacy installation before opening the world browser.";
+      return;
+    }
+
+    errorMessage = "";
+    try {
+      const source = await ensureDetectedGameIndex();
+      if (source) worldBrowserEnabled = true;
+    } catch (error) {
+      errorMessage = errorMessageFor(error, "Unable to prepare the GTA world browser.");
     }
   }
 
@@ -645,6 +667,12 @@
     </div>
 
     <div class="actions">
+      {#if gtaLegacyRoot}
+        <button type="button" class:active={worldBrowserEnabled} onclick={() => void toggleWorldBrowser()} disabled={gameIndexLoading}>
+          {worldBrowserEnabled ? "Close world browser" : gameIndexLoading ? "Preparing world…" : "World browser"}
+        </button>
+      {/if}
+
       <label class="max-nodes">
         <span>maxNodes override</span>
         <input
@@ -706,6 +734,14 @@
       </button>
     </div>
   </div>
+
+  {#if worldBrowserEnabled && gameIndexSource}
+    <WorldBrowser
+      gameIndex={gameIndexSource}
+      {workspacePath}
+      workspaceYmap={ymapPath}
+    />
+  {/if}
 
   {#if rpfArchive || rpfKeys}
     <div class="source-config">
@@ -914,6 +950,7 @@
       <div class="scene-layout">
         {#if
           viewportMode === "native" &&
+          !worldBrowserEnabled &&
           activeWorkspacePath &&
           ymapPath
         }

@@ -21,14 +21,18 @@ mod native_viewport;
 
 use native_viewport::{
     debug_three_viewport_benchmark_complete, debug_three_viewport_benchmark_spec,
-    native_viewport_create, native_viewport_input, native_viewport_load_scene,
-    native_viewport_pick, native_viewport_select, native_viewport_set_overlays,
-    native_viewport_set_projection, native_viewport_set_rect, native_viewport_set_visible,
-    native_viewport_shutdown, native_viewport_start_world_stream, native_viewport_stats,
-    native_viewport_stop_world_stream, native_viewport_world_stream_at, NativeViewportState,
+    native_viewport_create, native_viewport_focus_node, native_viewport_input,
+    native_viewport_isolate_node, native_viewport_load_scene, native_viewport_pick,
+    native_viewport_select, native_viewport_set_layer_visibility, native_viewport_set_node_visible,
+    native_viewport_set_overlays, native_viewport_set_projection, native_viewport_set_rect,
+    native_viewport_set_visible, native_viewport_show_all_nodes, native_viewport_shutdown,
+    native_viewport_start_world_stream, native_viewport_stats, native_viewport_stop_world_stream,
+    native_viewport_world_clear_overlays, native_viewport_world_search,
+    native_viewport_world_set_workspace_overlay, native_viewport_world_stream_at,
+    NativeViewportState,
 };
 
-const RAGELAB_CORE_REVISION: &str = "a91dbab3225e8533bd871f683fa30de2bc83988d";
+const RAGELAB_CORE_REVISION: &str = "46b7e4ad751b93b6242682d6afb03d06e9d92a49";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -656,11 +660,19 @@ pub fn run() {
             native_viewport_load_scene,
             native_viewport_start_world_stream,
             native_viewport_world_stream_at,
+            native_viewport_world_search,
+            native_viewport_world_set_workspace_overlay,
+            native_viewport_world_clear_overlays,
             native_viewport_stop_world_stream,
             native_viewport_set_rect,
             native_viewport_input,
             native_viewport_pick,
             native_viewport_select,
+            native_viewport_focus_node,
+            native_viewport_set_node_visible,
+            native_viewport_isolate_node,
+            native_viewport_show_all_nodes,
+            native_viewport_set_layer_visibility,
             native_viewport_set_projection,
             native_viewport_set_overlays,
             native_viewport_set_visible,

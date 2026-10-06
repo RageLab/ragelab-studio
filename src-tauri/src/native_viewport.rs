@@ -10,9 +10,9 @@ use std::{
 };
 
 use ragelab_engine::{
-    workspace_scene_render_package_with_game_index, GtaRpfWorldPoint, RenderPackage,
-    RenderPackageOptions, SceneAssetPreviewSources, SceneGameIndexSource, WorldStreamConfig,
-    WorldStreamReport, WorldStreamView, WorldStreamingRuntime,
+    workspace_scene_render_package_with_game_index, GtaRpfBrowserSearchReport, GtaRpfWorldPoint,
+    RenderPackage, RenderPackageOptions, SceneAssetPreviewSources, SceneGameIndexSource,
+    WorldStreamConfig, WorldStreamReport, WorldStreamView, WorldStreamingRuntime,
 };
 use ragelab_render::{
     CameraSnapshot, GpuCacheBudget, PickResult, Projection, SurfaceRenderer, ViewportOptions,
@@ -153,6 +153,33 @@ pub(crate) struct NativeWorldStreamAtRequest {
     fit_camera: bool,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NativeWorldSearchRequest {
+    query: String,
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NativeViewportNodeRequest {
+    node_index: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NativeViewportNodeVisibilityRequest {
+    node_index: u32,
+    visible: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NativeViewportLayerVisibilityRequest {
+    base_game: bool,
+    local_overlays: bool,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NativeViewportReport {
@@ -189,6 +216,18 @@ enum RenderCommand {
     WorldStreamAt {
         position: GtaRpfWorldPoint,
         fit_camera: bool,
+        reply: Sender<Result<NativeViewportReport, String>>,
+    },
+    WorldSearch {
+        query: String,
+        limit: usize,
+        reply: Sender<Result<GtaRpfBrowserSearchReport, String>>,
+    },
+    SetWorldOverlays {
+        packages: Vec<RenderPackage>,
+        reply: Sender<Result<NativeViewportReport, String>>,
+    },
+    ClearWorldOverlays {
         reply: Sender<Result<NativeViewportReport, String>>,
     },
     StopWorldStream {
@@ -231,6 +270,27 @@ enum RenderCommand {
     },
     Select {
         node_index: Option<u32>,
+        reply: Sender<Result<NativeViewportReport, String>>,
+    },
+    FocusNode {
+        node_index: u32,
+        reply: Sender<Result<NativeViewportReport, String>>,
+    },
+    SetNodeVisible {
+        node_index: u32,
+        visible: bool,
+        reply: Sender<Result<NativeViewportReport, String>>,
+    },
+    IsolateNode {
+        node_index: u32,
+        reply: Sender<Result<NativeViewportReport, String>>,
+    },
+    ShowAllNodes {
+        reply: Sender<Result<NativeViewportReport, String>>,
+    },
+    LayerVisibility {
+        base_game: bool,
+        local_overlays: bool,
         reply: Sender<Result<NativeViewportReport, String>>,
     },
     Projection {
@@ -570,6 +630,19 @@ pub(crate) fn native_viewport_load_scene(
     state: tauri::State<'_, NativeViewportState>,
     request: WorkspaceSceneRequest,
 ) -> Result<NativeViewportReport, String> {
+    let package = build_workspace_render_package(&request)?;
+
+    with_runtime(&state, |runtime| {
+        request_report(&runtime.sender, |reply| RenderCommand::Load {
+            package: Box::new(package),
+            reply,
+        })
+    })
+}
+
+fn build_workspace_render_package(
+    request: &WorkspaceSceneRequest,
+) -> Result<RenderPackage, String> {
     let scene = validate_workspace_scene_context(
         &request.workspace,
         &request.ymap,
@@ -578,7 +651,7 @@ pub(crate) fn native_viewport_load_scene(
         request.game_index.as_ref(),
         request.max_nodes,
     )?;
-    let package = workspace_scene_render_package_with_game_index(
+    workspace_scene_render_package_with_game_index(
         &scene.workspace,
         &scene.ymap,
         SceneAssetPreviewSources {
@@ -589,14 +662,7 @@ pub(crate) fn native_viewport_load_scene(
         scene.options,
         RenderPackageOptions::default(),
     )
-    .map_err(core_error)?;
-
-    with_runtime(&state, |runtime| {
-        request_report(&runtime.sender, |reply| RenderCommand::Load {
-            package: Box::new(package),
-            reply,
-        })
-    })
+    .map_err(core_error)
 }
 
 #[tauri::command]
@@ -658,6 +724,61 @@ pub(crate) fn native_viewport_world_stream_at(
         request_report(&runtime.sender, |reply| RenderCommand::WorldStreamAt {
             position,
             fit_camera: request.fit_camera,
+            reply,
+        })
+    })
+}
+
+#[tauri::command]
+pub(crate) fn native_viewport_world_search(
+    state: tauri::State<'_, NativeViewportState>,
+    request: NativeWorldSearchRequest,
+) -> Result<GtaRpfBrowserSearchReport, String> {
+    let query = request.query.trim().to_string();
+    if query.is_empty() {
+        return Err("World browser search query must not be empty".into());
+    }
+    let limit = request.limit.unwrap_or(50);
+    if !(1..=200).contains(&limit) {
+        return Err("World browser search limit must be within 1..=200".into());
+    }
+
+    with_runtime(&state, |runtime| {
+        let (reply, receive) = mpsc::channel();
+        runtime
+            .sender
+            .send(RenderCommand::WorldSearch {
+                query,
+                limit,
+                reply,
+            })
+            .map_err(|error| error.to_string())?;
+        receive
+            .recv_timeout(RENDER_COMMAND_TIMEOUT)
+            .map_err(|error| error.to_string())?
+    })
+}
+
+#[tauri::command]
+pub(crate) fn native_viewport_world_set_workspace_overlay(
+    state: tauri::State<'_, NativeViewportState>,
+    request: WorkspaceSceneRequest,
+) -> Result<NativeViewportReport, String> {
+    let package = build_workspace_render_package(&request)?;
+    with_runtime(&state, |runtime| {
+        request_report(&runtime.sender, |reply| RenderCommand::SetWorldOverlays {
+            packages: vec![package],
+            reply,
+        })
+    })
+}
+
+#[tauri::command]
+pub(crate) fn native_viewport_world_clear_overlays(
+    state: tauri::State<'_, NativeViewportState>,
+) -> Result<NativeViewportReport, String> {
+    with_runtime(&state, |runtime| {
+        request_report(&runtime.sender, |reply| RenderCommand::ClearWorldOverlays {
             reply,
         })
     })
@@ -779,6 +900,71 @@ pub(crate) fn native_viewport_select(
     with_runtime(&state, |runtime| {
         request_report(&runtime.sender, |reply| RenderCommand::Select {
             node_index: request.node_index,
+            reply,
+        })
+    })
+}
+
+#[tauri::command]
+pub(crate) fn native_viewport_focus_node(
+    state: tauri::State<'_, NativeViewportState>,
+    request: NativeViewportNodeRequest,
+) -> Result<NativeViewportReport, String> {
+    with_runtime(&state, |runtime| {
+        request_report(&runtime.sender, |reply| RenderCommand::FocusNode {
+            node_index: request.node_index,
+            reply,
+        })
+    })
+}
+
+#[tauri::command]
+pub(crate) fn native_viewport_set_node_visible(
+    state: tauri::State<'_, NativeViewportState>,
+    request: NativeViewportNodeVisibilityRequest,
+) -> Result<NativeViewportReport, String> {
+    with_runtime(&state, |runtime| {
+        request_report(&runtime.sender, |reply| RenderCommand::SetNodeVisible {
+            node_index: request.node_index,
+            visible: request.visible,
+            reply,
+        })
+    })
+}
+
+#[tauri::command]
+pub(crate) fn native_viewport_isolate_node(
+    state: tauri::State<'_, NativeViewportState>,
+    request: NativeViewportNodeRequest,
+) -> Result<NativeViewportReport, String> {
+    with_runtime(&state, |runtime| {
+        request_report(&runtime.sender, |reply| RenderCommand::IsolateNode {
+            node_index: request.node_index,
+            reply,
+        })
+    })
+}
+
+#[tauri::command]
+pub(crate) fn native_viewport_show_all_nodes(
+    state: tauri::State<'_, NativeViewportState>,
+) -> Result<NativeViewportReport, String> {
+    with_runtime(&state, |runtime| {
+        request_report(&runtime.sender, |reply| RenderCommand::ShowAllNodes {
+            reply,
+        })
+    })
+}
+
+#[tauri::command]
+pub(crate) fn native_viewport_set_layer_visibility(
+    state: tauri::State<'_, NativeViewportState>,
+    request: NativeViewportLayerVisibilityRequest,
+) -> Result<NativeViewportReport, String> {
+    with_runtime(&state, |runtime| {
+        request_report(&runtime.sender, |reply| RenderCommand::LayerVisibility {
+            base_game: request.base_game,
+            local_overlays: request.local_overlays,
             reply,
         })
     })
@@ -1021,6 +1207,83 @@ fn render_thread(
                 })();
                 let _ = reply.send(result);
             }
+            RenderCommand::WorldSearch {
+                query,
+                limit,
+                reply,
+            } => {
+                let result = streaming
+                    .as_ref()
+                    .ok_or_else(|| "World streaming is not active".to_string())
+                    .and_then(|active| {
+                        active
+                            .runtime
+                            .index()
+                            .search_browser(&query, limit)
+                            .map_err(core_error)
+                    });
+                let _ = reply.send(result);
+            }
+            RenderCommand::SetWorldOverlays { packages, reply } => {
+                let result = (|| -> Result<NativeViewportReport, String> {
+                    {
+                        let active = streaming
+                            .as_mut()
+                            .ok_or_else(|| "World streaming is not active".to_string())?;
+                        active
+                            .runtime
+                            .set_overlay_packages(packages)
+                            .map_err(core_error)?;
+                        let update = active
+                            .runtime
+                            .update(WorldStreamView::at(active.report.position))
+                            .map_err(core_error)?;
+                        if let Some(package) = update.package {
+                            if has_scene {
+                                renderer.update_streaming_package(package)
+                            } else {
+                                renderer.set_package(package)
+                            }
+                            .and_then(|_| renderer.render_frame())
+                            .map_err(|error| error.to_string())?;
+                            has_scene = true;
+                        }
+                        active.report = update.report;
+                    }
+                    Ok(report(&renderer, streaming.as_ref()))
+                })();
+                let _ = reply.send(result);
+            }
+            RenderCommand::ClearWorldOverlays { reply } => {
+                let result = (|| -> Result<NativeViewportReport, String> {
+                    {
+                        let active = streaming
+                            .as_mut()
+                            .ok_or_else(|| "World streaming is not active".to_string())?;
+                        active
+                            .runtime
+                            .set_overlay_packages(Vec::new())
+                            .map_err(core_error)?;
+                        let update = active
+                            .runtime
+                            .update(WorldStreamView::at(active.report.position))
+                            .map_err(core_error)?;
+                        if let Some(package) = update.package {
+                            if has_scene {
+                                renderer.update_streaming_package(package)
+                            } else {
+                                renderer.set_package(package)
+                            }
+                            .and_then(|_| renderer.render_frame())
+                            .map_err(|error| error.to_string())?;
+                            has_scene = true;
+                        }
+                        active.report = update.report;
+                    }
+                    Ok(report(&renderer, streaming.as_ref()))
+                })();
+                let _ = reply.send(result);
+            }
             RenderCommand::StopWorldStream { reply } => {
                 streaming = None;
                 let _ = reply.send(Ok(report(&renderer, None)));
@@ -1089,6 +1352,56 @@ fn render_thread(
             }
             RenderCommand::Select { node_index, reply } => {
                 renderer.select(node_index);
+                send_after_render(&mut renderer, has_scene, streaming.as_ref(), reply);
+            }
+            RenderCommand::FocusNode { node_index, reply } => {
+                let result = if renderer.focus_node(node_index) {
+                    renderer.select(Some(node_index));
+                    render_if_loaded(&mut renderer, has_scene)
+                        .map(|_| report(&renderer, streaming.as_ref()))
+                        .map_err(|error| error.to_string())
+                } else {
+                    Err(format!(
+                        "Native viewport node {node_index} is not visible or does not exist"
+                    ))
+                };
+                let _ = reply.send(result);
+            }
+            RenderCommand::SetNodeVisible {
+                node_index,
+                visible,
+                reply,
+            } => {
+                let result = if renderer.set_node_visible(node_index, visible) {
+                    render_if_loaded(&mut renderer, has_scene)
+                        .map(|_| report(&renderer, streaming.as_ref()))
+                        .map_err(|error| error.to_string())
+                } else {
+                    Err(format!("Native viewport node {node_index} does not exist"))
+                };
+                let _ = reply.send(result);
+            }
+            RenderCommand::IsolateNode { node_index, reply } => {
+                let result = if renderer.isolate_node(node_index) {
+                    renderer.select(Some(node_index));
+                    render_if_loaded(&mut renderer, has_scene)
+                        .map(|_| report(&renderer, streaming.as_ref()))
+                        .map_err(|error| error.to_string())
+                } else {
+                    Err(format!("Native viewport node {node_index} does not exist"))
+                };
+                let _ = reply.send(result);
+            }
+            RenderCommand::ShowAllNodes { reply } => {
+                renderer.show_all_nodes();
+                send_after_render(&mut renderer, has_scene, streaming.as_ref(), reply);
+            }
+            RenderCommand::LayerVisibility {
+                base_game,
+                local_overlays,
+                reply,
+            } => {
+                renderer.set_layer_visibility(base_game, local_overlays);
                 send_after_render(&mut renderer, has_scene, streaming.as_ref(), reply);
             }
             RenderCommand::Projection { projection, reply } => {
@@ -1429,6 +1742,10 @@ struct NativeWorldStreamSmokeSpec {
     max_active_maps: Option<usize>,
     max_cpu_chunks: Option<usize>,
     max_cpu_bytes: Option<u64>,
+    #[serde(default)]
+    browser_validation: bool,
+    #[serde(default)]
+    workspace_overlay: Option<WorkspaceSceneRequest>,
 }
 
 #[cfg(debug_assertions)]
@@ -1453,6 +1770,11 @@ struct NativeWorldStreamSmokeOutput {
     max_gpu_asset_cache_bytes: u64,
     max_gpu_texture_cache_bytes: u64,
     revisit_cache_hit: bool,
+    browser_search: Option<GtaRpfBrowserSearchReport>,
+    browser_node_index: Option<u32>,
+    provider_asset_found: bool,
+    overlay_mounted: bool,
+    overlay_cleared: bool,
     error: Option<String>,
 }
 
@@ -1501,6 +1823,11 @@ async fn run_debug_world_stream_smoke(
         max_gpu_asset_cache_bytes: 0,
         max_gpu_texture_cache_bytes: 0,
         revisit_cache_hit: false,
+        browser_search: None,
+        browser_node_index: None,
+        provider_asset_found: false,
+        overlay_mounted: false,
+        overlay_cleared: false,
         error: None,
     };
 
@@ -1581,6 +1908,10 @@ async fn run_debug_world_stream_smoke(
             return Err("world stream smoke revisit produced zero CPU chunk cache hits".into());
         }
 
+        if spec.browser_validation {
+            validate_native_world_browser_smoke(app, &spec, &mut output)?;
+        }
+
         native_viewport_shutdown(app.state::<NativeViewportState>())?;
         Ok(())
     }
@@ -1606,6 +1937,148 @@ async fn run_debug_world_stream_smoke(
     }
 
     output.ok
+}
+
+#[cfg(debug_assertions)]
+fn validate_native_world_browser_smoke(
+    app: &tauri::AppHandle,
+    spec: &NativeWorldStreamSmokeSpec,
+    output: &mut NativeWorldStreamSmokeOutput,
+) -> Result<(), String> {
+    let (node_index, archetype_hash) = {
+        let streaming = output
+            .steps
+            .last()
+            .and_then(|step| step.report.streaming.as_ref())
+            .ok_or_else(|| "world browser smoke has no active streaming report".to_string())?;
+        streaming
+            .active_chunks
+            .iter()
+            .flat_map(|map| &map.entities)
+            .find_map(|entry| {
+                let node_index = entry.render_node_index?;
+                let resolution = entry.resolution.as_ref()?;
+                resolution.asset_provider.as_ref()?;
+                Some((node_index, entry.entity.archetype_hash))
+            })
+            .ok_or_else(|| {
+                "world browser smoke found no rendered entity with a resolved provider asset"
+                    .to_string()
+            })?
+    };
+
+    let query = format!("0x{archetype_hash:08X}");
+    let search = native_viewport_world_search(
+        app.state::<NativeViewportState>(),
+        NativeWorldSearchRequest {
+            query,
+            limit: Some(20),
+        },
+    )?;
+    let provider_asset_found = search
+        .results
+        .iter()
+        .any(|result| result.hash == archetype_hash && result.asset_provider.is_some());
+    if !provider_asset_found {
+        return Err(
+            "world browser smoke exact archetype search did not resolve a provider asset".into(),
+        );
+    }
+    output.browser_search = Some(search);
+    output.browser_node_index = Some(node_index);
+    output.provider_asset_found = true;
+
+    native_viewport_focus_node(
+        app.state::<NativeViewportState>(),
+        NativeViewportNodeRequest { node_index },
+    )?;
+    native_viewport_isolate_node(
+        app.state::<NativeViewportState>(),
+        NativeViewportNodeRequest { node_index },
+    )?;
+    native_viewport_show_all_nodes(app.state::<NativeViewportState>())?;
+    native_viewport_set_node_visible(
+        app.state::<NativeViewportState>(),
+        NativeViewportNodeVisibilityRequest {
+            node_index,
+            visible: false,
+        },
+    )?;
+    native_viewport_set_node_visible(
+        app.state::<NativeViewportState>(),
+        NativeViewportNodeVisibilityRequest {
+            node_index,
+            visible: true,
+        },
+    )?;
+
+    if let Some(overlay) = spec.workspace_overlay.as_ref() {
+        let overlay_package = build_workspace_render_package(overlay)?;
+        let overlay_archetype = overlay_package
+            .descriptor
+            .scene
+            .instances
+            .first()
+            .map(|instance| instance.archetype_hash)
+            .ok_or_else(|| "world browser overlay has no instances".to_string())?;
+
+        let mounted = native_viewport_world_set_workspace_overlay(
+            app.state::<NativeViewportState>(),
+            overlay.clone(),
+        )?;
+        output.overlay_mounted = mounted
+            .streaming
+            .as_ref()
+            .is_some_and(|streaming| streaming.overlay_packages == 1);
+        if !output.overlay_mounted {
+            return Err("world browser smoke failed to mount exactly one workspace overlay".into());
+        }
+
+        native_viewport_set_layer_visibility(
+            app.state::<NativeViewportState>(),
+            NativeViewportLayerVisibilityRequest {
+                base_game: false,
+                local_overlays: true,
+            },
+        )?;
+        native_viewport_set_layer_visibility(
+            app.state::<NativeViewportState>(),
+            NativeViewportLayerVisibilityRequest {
+                base_game: true,
+                local_overlays: true,
+            },
+        )?;
+
+        let overlay_search = native_viewport_world_search(
+            app.state::<NativeViewportState>(),
+            NativeWorldSearchRequest {
+                query: format!("0x{overlay_archetype:08X}"),
+                limit: Some(20),
+            },
+        )?;
+        let overlay_provider_found = overlay_search
+            .results
+            .iter()
+            .any(|result| result.hash == overlay_archetype && result.asset_provider.is_some());
+        if !overlay_provider_found {
+            return Err(format!(
+                "world browser smoke overlay archetype 0x{overlay_archetype:08X} did not resolve back to a GTA provider asset"
+            ));
+        }
+        output.browser_search = Some(overlay_search);
+        output.provider_asset_found = true;
+
+        let cleared = native_viewport_world_clear_overlays(app.state::<NativeViewportState>())?;
+        output.overlay_cleared = cleared
+            .streaming
+            .as_ref()
+            .is_some_and(|streaming| streaming.overlay_packages == 0);
+        if !output.overlay_cleared {
+            return Err("world browser smoke failed to clear workspace overlays".into());
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(debug_assertions)]

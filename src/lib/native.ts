@@ -377,6 +377,95 @@ export interface NativeViewportStats {
   selectedNodeIndex: number | null;
 }
 
+export interface GtaRpfIndexLocator {
+  archiveRelative: string;
+  nested: string[];
+  entry: string;
+  loadRank: number;
+}
+
+export interface GtaWorldPoint {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface GtaWorldBounds {
+  min: GtaWorldPoint;
+  max: GtaWorldPoint;
+}
+
+export type GtaRpfAssetKind =
+  | "ytyp"
+  | "ymap"
+  | "ydr"
+  | "ydd"
+  | "ytd"
+  | "ybn"
+  | "yft";
+
+export interface NativeWorldArchetypeResolution {
+  archetypeHash: number;
+  provider: GtaRpfIndexLocator;
+  assetKind: GtaRpfAssetKind | null;
+  assetHash: number | null;
+  assetProvider: GtaRpfIndexLocator | null;
+  textureDictionaryHash: number | null;
+  physicsDictionaryHash: number | null;
+}
+
+export interface NativeWorldEntityRecord {
+  index: number;
+  archetypeHash: number;
+  position: GtaWorldPoint;
+  rotation: [number, number, number, number];
+  scaleXy: number | null;
+  scaleZ: number | null;
+  flags: number;
+  parentIndex: number | null;
+}
+
+export interface NativeWorldActiveEntity {
+  entity: NativeWorldEntityRecord;
+  renderNodeIndex: number | null;
+  resolution: NativeWorldArchetypeResolution | null;
+}
+
+export interface NativeWorldActiveMap {
+  mapHash: number;
+  provider: GtaRpfIndexLocator;
+  parentHash: number | null;
+  flags: number | null;
+  contentFlags: number | null;
+  bounds: GtaWorldBounds | null;
+  entities: NativeWorldActiveEntity[];
+}
+
+export type NativeWorldSearchResultKind = "ymap" | "archetype" | "asset";
+
+export interface NativeWorldSearchResult {
+  kind: NativeWorldSearchResultKind;
+  hash: number;
+  label: string;
+  provider: GtaRpfIndexLocator;
+  assetKind: GtaRpfAssetKind | null;
+  assetHash: number | null;
+  assetProvider: GtaRpfIndexLocator | null;
+  mapHash: number | null;
+  entityIndex: number | null;
+  position: GtaWorldPoint | null;
+  bounds: GtaWorldBounds | null;
+  entityCount: number | null;
+}
+
+export interface NativeWorldSearchReport {
+  schema: "ragelab.gta.browser-search";
+  schemaVersion: number;
+  query: string;
+  results: NativeWorldSearchResult[];
+  truncated: boolean;
+}
+
 export interface NativeWorldStreamSummary {
   instances: number;
   assets: number;
@@ -399,6 +488,7 @@ export interface NativeWorldStreamReport {
   visibleMaps: number;
   activeMaps: number;
   activeEntities: number;
+  activeChunks: NativeWorldActiveMap[];
   overlayPackages: number;
   overlaySuppressedMaps: number;
   ambiguousMaps: number;
@@ -768,6 +858,34 @@ export function moveNativeWorldStream(
   });
 }
 
+export function searchNativeWorld(
+  query: string,
+  limit = 50,
+): Promise<NativeWorldSearchReport> {
+  return invoke<NativeWorldSearchReport>("native_viewport_world_search", {
+    request: { query, limit },
+  });
+}
+
+export function setNativeWorldWorkspaceOverlay(
+  request: NativeViewportSceneRequest,
+): Promise<NativeViewportReport> {
+  return invoke<NativeViewportReport>("native_viewport_world_set_workspace_overlay", {
+    request: {
+      workspace: request.workspace,
+      ymap: request.ymap,
+      fallbackRoots: request.fallbackRoots ?? [],
+      rpfMounts: request.rpfMounts ?? [],
+      gameIndex: request.gameIndex ?? null,
+      maxNodes: request.maxNodes,
+    },
+  });
+}
+
+export function clearNativeWorldOverlays(): Promise<NativeViewportReport> {
+  return invoke<NativeViewportReport>("native_viewport_world_clear_overlays");
+}
+
 export function stopNativeWorldStream(): Promise<NativeViewportReport> {
   return invoke<NativeViewportReport>("native_viewport_stop_world_stream");
 }
@@ -798,6 +916,44 @@ export function selectNativeViewportNode(
 ): Promise<NativeViewportReport> {
   return invoke<NativeViewportReport>("native_viewport_select", {
     request: { nodeIndex },
+  });
+}
+
+export function focusNativeViewportNode(
+  nodeIndex: number,
+): Promise<NativeViewportReport> {
+  return invoke<NativeViewportReport>("native_viewport_focus_node", {
+    request: { nodeIndex },
+  });
+}
+
+export function setNativeViewportNodeVisible(
+  nodeIndex: number,
+  visible: boolean,
+): Promise<NativeViewportReport> {
+  return invoke<NativeViewportReport>("native_viewport_set_node_visible", {
+    request: { nodeIndex, visible },
+  });
+}
+
+export function isolateNativeViewportNode(
+  nodeIndex: number,
+): Promise<NativeViewportReport> {
+  return invoke<NativeViewportReport>("native_viewport_isolate_node", {
+    request: { nodeIndex },
+  });
+}
+
+export function showAllNativeViewportNodes(): Promise<NativeViewportReport> {
+  return invoke<NativeViewportReport>("native_viewport_show_all_nodes");
+}
+
+export function setNativeViewportLayerVisibility(
+  baseGame: boolean,
+  localOverlays: boolean,
+): Promise<NativeViewportReport> {
+  return invoke<NativeViewportReport>("native_viewport_set_layer_visibility", {
+    request: { baseGame, localOverlays },
   });
 }
 
