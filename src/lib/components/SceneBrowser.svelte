@@ -14,7 +14,9 @@
     prepareGtaRpfKeys,
     type AssetPreviewReport,
     type DebugThreeViewportBenchmarkSpec,
+    type SceneAssetReferenceReport,
     type SceneGameIndexSource,
+    type SceneInteriorReport,
     type SceneManifestReport,
     type SceneNodeReport,
     type SceneRpfMount,
@@ -47,6 +49,8 @@
   let maxNodes = "";
   let selectedNodeIndex: number | null = null;
   let selectedNode: SceneNodeReport | null = null;
+  let selectedInterior: SceneInteriorReport | null = null;
+  let selectedCollisionAsset: SceneAssetReferenceReport | null = null;
   let selectedPreviewError = "";
   let unresolvedNodes: SceneNodeReport[] = [];
   let collisionNodes: SceneNodeReport[] = [];
@@ -117,6 +121,20 @@
   $: selectedNode =
     manifest && selectedNodeIndex !== null
       ? (manifest.nodes.find((node) => node.index === selectedNodeIndex) ?? null)
+      : null;
+
+  $: selectedInterior =
+    manifest && selectedNode?.interior
+      ? (manifest.interiors.find(
+          (interior) => interior.index === selectedNode?.interior?.interiorIndex,
+        ) ?? null)
+      : null;
+
+  $: selectedCollisionAsset =
+    manifest && selectedNode?.collision?.assetRef !== null && selectedNode?.collision
+      ? (manifest.assets.find(
+          (asset) => asset.id === selectedNode?.collision?.assetRef,
+        ) ?? null)
       : null;
 
   $: unresolvedNodes =
@@ -1108,6 +1126,108 @@
                 </div>
                 <code>{selectedNode.collision.hash}</code>
                 <span>{selectedNode.collision.reason}</span>
+                {#if selectedCollisionAsset}
+                  <code>{selectedCollisionAsset.path}</code>
+                {/if}
+                <small>
+                  Safe authoring: existing shape radius/material only through Core
+                  <code>ybn.edit-polygon</code>; unsupported relationships stay inspect-only.
+                  Writes require a separate output and semantic reopen.
+                </small>
+              </div>
+            {/if}
+
+            {#if selectedNode.interior && selectedInterior}
+              <div class="interior-inspector">
+                <div class="interior-heading">
+                  <div>
+                    <span>MLO interior #{selectedInterior.index}</span>
+                    <strong>{selectedInterior.archetypeHash}</strong>
+                  </div>
+                  <code>{selectedInterior.providerPath}</code>
+                </div>
+                <div class="interior-meta">
+                  <span>{selectedInterior.rooms.length} rooms</span>
+                  <span>{selectedInterior.portals.length} portals</span>
+                  <span>{selectedInterior.entitySets.length} entity sets</span>
+                  <span>
+                    MLO entity {selectedNode.interior.mloEntityIndex ?? "root"}
+                  </span>
+                  {#if selectedNode.interior.roomIndices.length > 0}
+                    <span>rooms [{selectedNode.interior.roomIndices.join(", ")}]</span>
+                  {/if}
+                </div>
+
+                <details open>
+                  <summary>Rooms</summary>
+                  <div class="topology-list">
+                    {#each selectedInterior.rooms.slice(0, 64) as room}
+                      <div class="topology-row">
+                        <strong>#{room.index} {room.name || "(unnamed)"}</strong>
+                        <span>
+                          floor {room.floorId} · flags {room.flags} ·
+                          {room.portalCount} portal(s) ·
+                          {room.attachedObjects.length} attached object(s)
+                        </span>
+                        <code>
+                          [{room.boundsMin.join(", ")}] → [{room.boundsMax.join(", ")}]
+                        </code>
+                      </div>
+                    {/each}
+                    {#if selectedInterior.rooms.length > 64}
+                      <small>Showing 64 of {selectedInterior.rooms.length} rooms.</small>
+                    {/if}
+                  </div>
+                </details>
+
+                <details>
+                  <summary>Portals</summary>
+                  <div class="topology-list">
+                    {#each selectedInterior.portals.slice(0, 64) as portal}
+                      <div class="topology-row">
+                        <strong>
+                          #{portal.index} room {portal.roomFrom} → {portal.roomTo}
+                        </strong>
+                        <span>
+                          {portal.exterior ? "exterior" : "interior"} · flags {portal.flags} ·
+                          opacity {portal.opacity} · audio {portal.audioOcclusion}
+                        </span>
+                        <span>
+                          {portal.corners.length} corner(s) ·
+                          {portal.attachedObjects.length} attached object(s)
+                        </span>
+                      </div>
+                    {/each}
+                    {#if selectedInterior.portals.length > 64}
+                      <small>Showing 64 of {selectedInterior.portals.length} portals.</small>
+                    {/if}
+                  </div>
+                </details>
+
+                <details>
+                  <summary>Entity sets</summary>
+                  <div class="topology-list">
+                    {#each selectedInterior.entitySets.slice(0, 64) as entitySet}
+                      <div class="topology-row">
+                        <strong>#{entitySet.index} {entitySet.nameHash}</strong>
+                        <span>
+                          {entitySet.entities.length} entity(s) · locations
+                          [{entitySet.locations.join(", ")}]
+                        </span>
+                      </div>
+                    {/each}
+                    {#if selectedInterior.entitySets.length > 64}
+                      <small>
+                        Showing 64 of {selectedInterior.entitySets.length} entity sets.
+                      </small>
+                    {/if}
+                  </div>
+                </details>
+
+                <small class="inspect-only">
+                  Rooms, portals, entity-set membership and unsupported MLO relationships are
+                  inspect-only. RageLab does not infer interior placement from proximity.
+                </small>
               </div>
             {/if}
           {:else}
@@ -1625,6 +1745,99 @@
   .collision > span {
     text-transform: none;
     line-height: 1.45;
+  }
+
+  .collision > small {
+    color: #7f8893;
+    line-height: 1.45;
+  }
+
+  .interior-inspector {
+    margin-top: 9px;
+    padding: 10px;
+    border: 1px solid #31404d;
+    border-radius: 7px;
+    background: #0d1318;
+    display: grid;
+    gap: 9px;
+  }
+
+  .interior-heading {
+    display: grid;
+    gap: 5px;
+  }
+
+  .interior-heading > div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .interior-heading span,
+  .interior-inspector summary {
+    color: #8b949f;
+    font-size: 10px;
+    font-weight: 650;
+    text-transform: uppercase;
+  }
+
+  .interior-heading code,
+  .topology-row code {
+    overflow-wrap: anywhere;
+  }
+
+  .interior-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+
+  .interior-meta span {
+    padding: 3px 5px;
+    border: 1px solid #2b3945;
+    border-radius: 4px;
+    color: #9ca7b2;
+    background: #111920;
+    font-size: 9px;
+  }
+
+  .interior-inspector details {
+    border-top: 1px solid #26313a;
+    padding-top: 7px;
+  }
+
+  .interior-inspector summary {
+    cursor: pointer;
+  }
+
+  .topology-list {
+    margin-top: 7px;
+    display: grid;
+    gap: 5px;
+  }
+
+  .topology-row {
+    padding: 7px;
+    border: 1px solid #27323b;
+    border-radius: 5px;
+    background: #0b1014;
+    display: grid;
+    gap: 3px;
+    font-size: 10px;
+  }
+
+  .topology-row span,
+  .topology-list small,
+  .inspect-only {
+    color: #7c8690;
+    line-height: 1.4;
+  }
+
+  .inspect-only {
+    padding-top: 7px;
+    border-top: 1px solid #26313a;
+    font-size: 9px;
   }
 
   .node-placeholder {

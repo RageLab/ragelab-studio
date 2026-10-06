@@ -42,6 +42,7 @@
   let grid = true;
   let wireframe = false;
   let bounds = false;
+  let collision = false;
   let lastSceneKey = "";
   let previousSelectedNodeIndex: number | null = null;
   let resizeObserver: ResizeObserver | null = null;
@@ -134,7 +135,7 @@
       report = await createNativeViewport(width, height);
       initialized = true;
       await syncRect();
-      await setNativeViewportOverlays(grid, wireframe, bounds);
+      await setNativeViewportOverlays(grid, wireframe, bounds, collision);
       await setNativeViewportVisible(true);
       if (manifest) {
         lastSceneKey = sceneKey();
@@ -358,7 +359,7 @@
 
   async function updateOverlays() {
     try {
-      report = await setNativeViewportOverlays(grid, wireframe, bounds);
+      report = await setNativeViewportOverlays(grid, wireframe, bounds, collision);
     } catch (error) {
       handleNativeError(error);
     }
@@ -417,6 +418,9 @@
       </button>
       <button type="button" class:active={bounds} onclick={() => { bounds = !bounds; void updateOverlays(); }}>
         Bounds
+      </button>
+      <button type="button" class:active={collision} onclick={() => { collision = !collision; void updateOverlays(); }}>
+        Collision
       </button>
       <button type="button" onclick={refreshStats}>Stats</button>
     </div>

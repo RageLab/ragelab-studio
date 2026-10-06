@@ -358,6 +358,67 @@ export interface SceneCollisionRelationshipReport {
   reason: string;
 }
 
+export interface SceneInteriorNodeContextReport {
+  interiorIndex: number;
+  mloArchetypeHash: string;
+  mloEntityIndex: number | null;
+  roomIndices: number[];
+}
+
+export interface SceneInteriorRoomReport {
+  index: number;
+  name: string;
+  boundsMin: [number, number, number];
+  boundsMax: [number, number, number];
+  flags: number;
+  portalCount: number;
+  floorId: number;
+  attachedObjects: number[];
+}
+
+export interface SceneInteriorPortalReport {
+  index: number;
+  roomFrom: number;
+  roomTo: number;
+  flags: number;
+  mirrorPriority: number;
+  opacity: number;
+  audioOcclusion: number;
+  exterior: boolean;
+  corners: [number, number, number][];
+  attachedObjects: number[];
+}
+
+export interface SceneInteriorEntitySetEntityReport {
+  index: number;
+  archetypeHash: string;
+  position: [number, number, number];
+  rotation: [number, number, number, number];
+  scale: [number, number, number] | null;
+  flags: number;
+  parentIndex: number | null;
+}
+
+export interface SceneInteriorEntitySetReport {
+  index: number;
+  nameHash: string;
+  locations: number[];
+  entities: SceneInteriorEntitySetEntityReport[];
+}
+
+export interface SceneInteriorReport {
+  index: number;
+  sourceNodeIndex: number;
+  sourceEntityIndex: number;
+  archetypeHash: string;
+  providerPath: string;
+  boundsMin: [number, number, number];
+  boundsMax: [number, number, number];
+  rooms: SceneInteriorRoomReport[];
+  portals: SceneInteriorPortalReport[];
+  entitySets: SceneInteriorEntitySetReport[];
+}
+
 export interface SceneNodeReport {
   index: number;
   sourceYmap: string;
@@ -370,6 +431,7 @@ export interface SceneNodeReport {
   resolution: SceneResolutionState;
   reason: SceneResolutionReasonReport | null;
   collision: SceneCollisionRelationshipReport | null;
+  interior: SceneInteriorNodeContextReport | null;
 }
 
 export interface SceneAssetSelectorReport {
@@ -425,6 +487,7 @@ export interface SceneManifestReport {
     nameHash: string | null;
   };
   nodes: SceneNodeReport[];
+  interiors: SceneInteriorReport[];
   assets: SceneAssetReferenceReport[];
   summary: {
     totalEntities: number;
@@ -1239,9 +1302,10 @@ export function setNativeViewportOverlays(
   grid: boolean,
   wireframe: boolean,
   bounds: boolean,
+  collision: boolean,
 ): Promise<NativeViewportReport> {
   return invoke<NativeViewportReport>("native_viewport_set_overlays", {
-    request: { grid, wireframe, bounds },
+    request: { grid, wireframe, bounds, collision },
   });
 }
 

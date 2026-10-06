@@ -121,6 +121,7 @@ pub(crate) struct NativeViewportOverlaysRequest {
     grid: bool,
     wireframe: bool,
     bounds: bool,
+    collision: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -311,6 +312,7 @@ enum RenderCommand {
         grid: bool,
         wireframe: bool,
         bounds: bool,
+        collision: bool,
         reply: Sender<Result<NativeViewportReport, String>>,
     },
     Gizmo {
@@ -1035,6 +1037,7 @@ pub(crate) fn native_viewport_set_overlays(
             grid: request.grid,
             wireframe: request.wireframe,
             bounds: request.bounds,
+            collision: request.collision,
             reply,
         })
     })
@@ -1488,9 +1491,11 @@ fn render_thread(
                 grid,
                 wireframe,
                 bounds,
+                collision,
                 reply,
             } => {
                 renderer.set_overlays(grid, wireframe, bounds);
+                renderer.set_collision_overlay(collision);
                 send_after_render(&mut renderer, has_scene, streaming.as_ref(), reply);
             }
             RenderCommand::Gizmo { mode, reply } => {
@@ -1606,6 +1611,8 @@ struct NativeViewportSmokeSpec {
     width: u32,
     #[serde(default = "smoke_height")]
     height: u32,
+    #[serde(default)]
+    collision: bool,
 }
 
 #[cfg(debug_assertions)]
@@ -1619,6 +1626,7 @@ struct NativeViewportSmokeOutput {
     load_wall_ms: f64,
     benchmark_frames: u32,
     benchmark_frame_wall_ms: f64,
+    collision_overlay: bool,
     pick: Option<NativeViewportPickReport>,
     final_report: Option<NativeViewportReport>,
     error: Option<String>,
@@ -1690,6 +1698,7 @@ async fn run_debug_smoke(
         load_wall_ms: 0.0,
         benchmark_frames: 0,
         benchmark_frame_wall_ms: 0.0,
+        collision_overlay: spec.collision,
         pick: None,
         final_report: None,
         error: None,
@@ -1717,6 +1726,16 @@ async fn run_debug_smoke(
             native_viewport_load_scene(app.state::<NativeViewportState>(), spec.scene.clone())?;
         output.load_wall_ms = load_started.elapsed().as_secs_f64() * 1000.0;
         output.loaded = Some(loaded);
+
+        native_viewport_set_overlays(
+            app.state::<NativeViewportState>(),
+            NativeViewportOverlaysRequest {
+                grid: true,
+                wireframe: false,
+                bounds: false,
+                collision: spec.collision,
+            },
+        )?;
 
         const BENCHMARK_FRAMES: u32 = 90;
         let frame_benchmark_started = Instant::now();

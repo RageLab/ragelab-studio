@@ -36,6 +36,7 @@
   let grid = true;
   let wireframe = false;
   let bounds = false;
+  let collision = false;
   let previousSelectedNodeIndex: number | null = null;
   let resizeObserver: ResizeObserver | null = null;
   let rectFrame = 0;
@@ -112,7 +113,7 @@
       report = await createNativeViewport(width, height);
       initialized = true;
       await syncRect();
-      await setNativeViewportOverlays(grid, wireframe, bounds);
+      await setNativeViewportOverlays(grid, wireframe, bounds, collision);
       report = await startNativeWorldStream({
         gameIndex,
         position: initialPosition,
@@ -324,7 +325,7 @@
 
   async function updateOverlays() {
     try {
-      report = await setNativeViewportOverlays(grid, wireframe, bounds);
+      report = await setNativeViewportOverlays(grid, wireframe, bounds, collision);
     } catch (error) {
       handleNativeError(error);
     }
@@ -364,6 +365,7 @@
       <button type="button" class:active={grid} onclick={() => { grid = !grid; void updateOverlays(); }}>Grid</button>
       <button type="button" class:active={wireframe} onclick={() => { wireframe = !wireframe; void updateOverlays(); }}>Wire</button>
       <button type="button" class:active={bounds} onclick={() => { bounds = !bounds; void updateOverlays(); }}>Bounds</button>
+      <button type="button" class:active={collision} onclick={() => { collision = !collision; void updateOverlays(); }}>Collision</button>
       <button type="button" onclick={() => void refresh()}>Stats</button>
     </div>
   </div>

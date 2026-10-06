@@ -39,7 +39,7 @@ use native_viewport::{
     native_viewport_world_stream_at, NativeViewportState,
 };
 
-const RAGELAB_CORE_REVISION: &str = "0b7a83afadb04ebe5e7ca6e1973411c2f611ea70";
+const RAGELAB_CORE_REVISION: &str = "ce54a38559456114e07b938851d7a911d2a45412";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
