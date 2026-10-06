@@ -31,7 +31,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 The repository currently provides the desktop application shell, native workspace directory selection, GTA V Legacy/FiveM discovery, direct engine-backed asset inspection/capability discovery, plan-first declarative Legacy editing, an engine-backed YMAP workspace scene browser, and typed native bridges for workspace export preflight/export reports. The scene browser uses the reusable RageLab `ragelab-render` wgpu surface renderer by default: one shared `RenderPackage` carries resolved geometry, materials, textures, provenance and transforms from Core into GPU caches without reparsing RAGE data in the UI. The previous Three.js preview viewport remains available as a lazy-loaded fallback. Editing always chooses a separate output path, runs a dry-run plan first, invalidates that plan when parameters change, and delegates apply/replan/semantic verification to the Rust core.
 
-The Rust adapter and native renderer are reproducibly pinned to RageLab core revision `63f5fec65c195e318c3477da0888e5cabee53bfb`. Studio builds do not depend on a local RageLab checkout.
+The Rust adapter and native renderer are reproducibly pinned to RageLab core revision `a91dbab3225e8533bd871f683fa30de2bc83988d`. Studio builds do not depend on a local RageLab checkout. The native backend also exposes camera-driven GTA world streaming with bounded CPU/GPU residency, plus a debug standalone YMAP viewer (`--native-viewport-open <spec.json>`) for direct Rust/wgpu validation.
 
 ## Development
 

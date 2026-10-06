@@ -365,15 +365,91 @@ export interface NativeViewportStats {
   textures: number;
   gpuAssetCache: number;
   gpuTextureCache: number;
+  gpuAssetCacheBytes: number;
+  gpuTextureCacheBytes: number;
+  gpuCacheHits: number;
+  gpuCacheMisses: number;
+  gpuEvictions: number;
+  gpuBudgetOverflow: boolean;
   uploadedPayloadBytes: number;
   sceneLoadMs: number;
   lastFrameMs: number;
   selectedNodeIndex: number | null;
 }
 
+export interface NativeWorldStreamSummary {
+  instances: number;
+  assets: number;
+  readyAssets: number;
+  meshes: number;
+  materials: number;
+  textures: number;
+  blobBytes: number;
+}
+
+export interface NativeWorldStreamReport {
+  schema: "ragelab.world-stream";
+  schemaVersion: number;
+  tick: number;
+  position: { x: number; y: number; z: number };
+  loadRadius: number;
+  retainRadius: number;
+  candidateMapKeys: number;
+  candidateMaps: number;
+  visibleMaps: number;
+  activeMaps: number;
+  activeEntities: number;
+  overlayPackages: number;
+  overlaySuppressedMaps: number;
+  ambiguousMaps: number;
+  unknownBoundsMaps: number;
+  deferredParentMaps: number;
+  lodDeferredEntities: number;
+  loadedChunks: number;
+  unloadedChunks: number;
+  cacheHits: number;
+  cacheMisses: number;
+  cumulativeCacheHits: number;
+  cumulativeCacheMisses: number;
+  cpuCachedChunks: number;
+  cpuCachedBytes: number;
+  cpuEvictions: number;
+  cpuBudgetOverflow: boolean;
+  renderBudgetDrops: number;
+  mergedSummary: NativeWorldStreamSummary | null;
+  batchWarnings: string[];
+  loadErrors: Array<{
+    chunk: {
+      mapHash: number;
+      provider: {
+        archiveRelative: string;
+        nested: string[];
+        entry: string;
+        loadRank: number;
+      };
+    };
+    message: string;
+  }>;
+}
+
+export interface NativeWorldStreamStartRequest {
+  gameIndex: SceneGameIndexSource;
+  position: [number, number, number];
+  loadRadius?: number;
+  retainRadius?: number;
+  maxActiveMaps?: number;
+  maxCpuChunks?: number;
+  maxCpuBytes?: number;
+  maxGpuAssets?: number;
+  maxGpuTextures?: number;
+  maxGpuAssetBytes?: number;
+  maxGpuTextureBytes?: number;
+}
+
 export interface NativeViewportReport {
   stats: NativeViewportStats;
   camera: NativeViewportCamera | null;
+  streaming: NativeWorldStreamReport | null;
 }
 
 export interface NativeViewportPick {
@@ -404,6 +480,7 @@ export interface NativeViewportRect {
 
 export type NativeViewportInput =
   | { kind: "orbit"; deltaX: number; deltaY: number }
+  | { kind: "look"; deltaX: number; deltaY: number }
   | { kind: "pan"; deltaX: number; deltaY: number }
   | { kind: "zoom"; delta: number }
   | { kind: "fly"; forward: number; right: number; up: number };
@@ -672,6 +749,27 @@ export function loadNativeViewportScene(
       maxNodes: request.maxNodes,
     },
   });
+}
+
+export function startNativeWorldStream(
+  request: NativeWorldStreamStartRequest,
+): Promise<NativeViewportReport> {
+  return invoke<NativeViewportReport>("native_viewport_start_world_stream", {
+    request,
+  });
+}
+
+export function moveNativeWorldStream(
+  position: [number, number, number],
+  fitCamera = false,
+): Promise<NativeViewportReport> {
+  return invoke<NativeViewportReport>("native_viewport_world_stream_at", {
+    request: { position, fitCamera },
+  });
+}
+
+export function stopNativeWorldStream(): Promise<NativeViewportReport> {
+  return invoke<NativeViewportReport>("native_viewport_stop_world_stream");
 }
 
 export function setNativeViewportRect(

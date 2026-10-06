@@ -62,6 +62,37 @@ The load comparison is directly relevant to user-visible readiness: native build
 
 Frame numbers are **not GPU-equivalent measurements**. The native figure includes the Rust command/channel/render/present wall path used by the smoke harness; the Three.js figure measures the JavaScript render-call interval and may not include completed GPU presentation. They are retained as regression indicators, not as a claim that one backend has lower GPU frame time.
 
+
+
+## Camera-driven world streaming
+
+Card 11 extends the native viewport with the Core-owned `WorldStreamingRuntime`. The Studio adapter exposes typed start/move/stop commands and forwards the resulting `WorldStreamReport` together with renderer stats. The renderer preserves camera state across streamed package swaps and keeps inactive GPU residency within explicit budgets.
+
+Entity LOD distance thresholds remain fail-closed: the current persistent index does not prove/persist enough `lodDist` / `childLodDist` semantics, so RageLab does not invent GTA thresholds.
+
+### Multi-area validation
+
+A native Studio smoke visited three distant GTA Legacy regions and then revisited the first:
+
+| Step | Active maps | Instances | CPU cache | Wall |
+| --- | ---: | ---: | ---: | ---: |
+| Los Santos | 4 | 10 | 6.1 MiB | 11.35 s |
+| Sandy Shores | 4 | 560 | 42.2 MiB | 19.95 s |
+| Paleto Bay | 4 | 751 | 115.3 MiB | 37.23 s |
+| Los Santos revisit | 4 | 10 | 115.3 MiB | 89.8 ms |
+
+The revisit produced 4/4 CPU chunk cache hits and zero chunk reloads. Peak managed GPU estimates were about 18.95 MiB of asset buffers and 96.53 MiB of textures, with no CPU/GPU budget overflow and no chunk load errors. The active world remained capped at four maps instead of preloading the full GTA world.
+
+## Standalone native YMAP viewer
+
+Debug builds accept:
+
+```text
+ragelab-studio.exe --native-viewport-open <spec.json>
+```
+
+This creates a separate top-level Rust/wgpu window rather than the click-through child overlay used inside the Studio WebView. It is focusable/resizable and supports direct Windows input: left-drag free-look, right/middle-drag pan, camera-relative WASD, Q/E vertical movement, Shift boost, +/- zoom, click picking and Esc close. The standalone mode is a validation/development surface, not a replacement for the integrated Studio shell.
+
 ## Fallback policy
 
 Native wgpu is the default after the parity gates above. Three.js remains selectable and is activated automatically if native viewport initialization fails. Its preview payloads are not loaded while native mode is active.

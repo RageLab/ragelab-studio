@@ -24,10 +24,11 @@ use native_viewport::{
     native_viewport_create, native_viewport_input, native_viewport_load_scene,
     native_viewport_pick, native_viewport_select, native_viewport_set_overlays,
     native_viewport_set_projection, native_viewport_set_rect, native_viewport_set_visible,
-    native_viewport_shutdown, native_viewport_stats, NativeViewportState,
+    native_viewport_shutdown, native_viewport_start_world_stream, native_viewport_stats,
+    native_viewport_stop_world_stream, native_viewport_world_stream_at, NativeViewportState,
 };
 
-const RAGELAB_CORE_REVISION: &str = "63f5fec65c195e318c3477da0888e5cabee53bfb";
+const RAGELAB_CORE_REVISION: &str = "a91dbab3225e8533bd871f683fa30de2bc83988d";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -627,7 +628,17 @@ pub fn run() {
         .manage(NativeViewportState::default())
         .setup(|app| {
             #[cfg(debug_assertions)]
-            native_viewport::maybe_start_debug_smoke(app.handle().clone(), RAGELAB_CORE_REVISION);
+            {
+                native_viewport::maybe_start_debug_open(app.handle().clone());
+                native_viewport::maybe_start_debug_smoke(
+                    app.handle().clone(),
+                    RAGELAB_CORE_REVISION,
+                );
+                native_viewport::maybe_start_debug_world_stream_smoke(
+                    app.handle().clone(),
+                    RAGELAB_CORE_REVISION,
+                );
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -643,6 +654,9 @@ pub fn run() {
             core_workspace_scene_asset_preview,
             native_viewport_create,
             native_viewport_load_scene,
+            native_viewport_start_world_stream,
+            native_viewport_world_stream_at,
+            native_viewport_stop_world_stream,
             native_viewport_set_rect,
             native_viewport_input,
             native_viewport_pick,

@@ -19,8 +19,16 @@ tauri = { version = "2", features = ["unstable"] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-ragelab-engine = { git = "https://github.com/RageLab/ragelab.git", rev = "63f5fec65c195e318c3477da0888e5cabee53bfb" }
-ragelab-render = { git = "https://github.com/RageLab/ragelab.git", rev = "63f5fec65c195e318c3477da0888e5cabee53bfb" }
+ragelab-engine = { git = "https://github.com/RageLab/ragelab.git", rev = "a91dbab3225e8533bd871f683fa30de2bc83988d" }
+ragelab-render = { git = "https://github.com/RageLab/ragelab.git", rev = "a91dbab3225e8533bd871f683fa30de2bc83988d" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+] }
 
 [profile.release]
 codegen-units = 1
