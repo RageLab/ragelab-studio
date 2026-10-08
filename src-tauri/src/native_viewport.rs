@@ -352,6 +352,9 @@ enum RenderCommand {
     Stats {
         reply: Sender<Result<NativeViewportReport, String>>,
     },
+    CycleLodDebug {
+        reply: Sender<Result<NativeViewportReport, String>>,
+    },
     Shutdown,
 }
 
@@ -776,7 +779,7 @@ fn spawn_standalone_input_thread(
         Graphics::Gdi::ScreenToClient,
         UI::{
             Input::KeyboardAndMouse::{
-                GetAsyncKeyState, VK_ADD, VK_ESCAPE, VK_LBUTTON, VK_MBUTTON, VK_OEM_MINUS,
+                GetAsyncKeyState, VK_ADD, VK_ESCAPE, VK_F7, VK_LBUTTON, VK_MBUTTON, VK_OEM_MINUS,
                 VK_OEM_PLUS, VK_RBUTTON, VK_SHIFT, VK_SUBTRACT,
             },
             WindowsAndMessaging::{GetCursorPos, GetForegroundWindow},
@@ -795,6 +798,8 @@ fn spawn_standalone_input_thread(
             let mut plus_was_down = false;
             let mut minus_was_down = false;
             let mut escape_was_down = false;
+            let mut lod_debug_was_down = false;
+            let mut lod_debug_step = 0_usize;
             let mut last_motion_sample = Instant::now();
 
             while !stop.load(Ordering::Acquire) {
@@ -929,6 +934,20 @@ fn spawn_standalone_input_thread(
                     send_detached(&sender, |reply| RenderCommand::Zoom { delta: 0.75, reply });
                 }
                 minus_was_down = minus_down;
+
+                // F7 compares exactly the same camera in normal, HD-only
+                // and LOD-only modes. This is a diagnostic, not the default.
+                let lod_debug_down = key_down(VK_F7 as i32);
+                if lod_debug_down && !lod_debug_was_down {
+                    lod_debug_step = (lod_debug_step + 1) % 3;
+                    let modes = ["Normal", "HD + ORPHANHD", "LOD / proxy"];
+                    let _ = window.set_title(&format!(
+                        "RageLab Map — LOD diagnostic: {} (F7)",
+                        modes[lod_debug_step]
+                    ));
+                    send_detached(&sender, |reply| RenderCommand::CycleLodDebug { reply });
+                }
+                lod_debug_was_down = lod_debug_down;
 
                 let escape_down = key_down(VK_ESCAPE as i32);
                 if escape_down && !escape_was_down {
@@ -2039,6 +2058,15 @@ fn render_thread(
             }
             RenderCommand::Gizmo { mode, reply } => {
                 renderer.set_gizmo_mode(mode);
+                send_after_render(&mut renderer, has_scene, streaming.as_ref(), reply);
+            }
+            RenderCommand::CycleLodDebug { reply } => {
+                let mode = renderer.cycle_lod_debug_mode();
+                diagnostics::record_event(
+                    "lod",
+                    "debug_filter_changed",
+                    serde_json::json!({ "mode": mode }),
+                );
                 send_after_render(&mut renderer, has_scene, streaming.as_ref(), reply);
             }
             RenderCommand::Stats { reply } => {
