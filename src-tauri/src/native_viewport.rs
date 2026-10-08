@@ -1095,7 +1095,10 @@ fn start_native_world_stream_blocking(
             .unwrap_or(defaults.max_asset_bytes),
         max_texture_bytes: request
             .max_gpu_texture_bytes
-            .unwrap_or(defaults.max_texture_bytes),
+            // Full mip chains require ~33% more VRAM than the previous
+            // level-0-only cache. Keep an explicit GTA-only budget and
+            // preserve per-request overrides.
+            .unwrap_or(defaults.max_texture_bytes.saturating_mul(3) / 2),
     };
     gpu_budget.validate().map_err(|error| error.to_string())?;
     let position = world_point(request.position)?;
@@ -2191,6 +2194,9 @@ fn apply_background_world_updates(
                             "pendingPages": active.report.pending_pages,
                             "compiledPages": active.report.compiled_pages,
                             "failedPages": active.report.failed_pages,
+                            "hdLodInstances": active.report.hd_lod_instances,
+                            "proxyLodInstances": active.report.proxy_lod_instances,
+                            "unknownLodInstances": active.report.unknown_lod_instances,
                             "spatialOmittedNodes": active.report.spatial_omitted_nodes,
                             "prefetchPending": prefetch_pending,
                         }),

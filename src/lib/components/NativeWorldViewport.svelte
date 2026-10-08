@@ -197,6 +197,9 @@
     <div class="stats">
       <span>{report.streaming?.activeMaps ?? 0} maps</span>
       <span>{report.stats.instances} instances</span>
+      <span title="Number of high-detail and proxy LOD entities currently loaded. GTA LOD hierarchy switching is still incomplete.">
+        HD {report.streaming?.hdLodInstances ?? 0} / proxy LOD {report.streaming?.proxyLodInstances ?? 0}
+      </span>
       <span>{report.streaming?.compiledPages ?? 0} pages ready</span>
       {#if (report.streaming?.pendingPages ?? 0) > 0}
         <span class="coverage-warning" title="The world is loading additional geometry pages.">

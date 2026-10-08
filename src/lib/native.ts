@@ -768,6 +768,9 @@ export interface NativeWorldStreamReport {
   visibleMaps: number;
   activeMaps: number;
   activeEntities: number;
+  hdLodInstances: number;
+  proxyLodInstances: number;
+  unknownLodInstances: number;
   spatialOmittedNodes: number;
   spatialOmittedAssets: number;
   renderOmittedAssets: number;
