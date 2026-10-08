@@ -19,6 +19,7 @@ use ragelab_engine::{
 use serde::{Deserialize, Serialize};
 
 mod authoring;
+mod diagnostics;
 mod native_viewport;
 
 use authoring::{
@@ -26,11 +27,14 @@ use authoring::{
     authoring_preview_world_overlay, authoring_redo, authoring_revert, authoring_save_as,
     authoring_snapshot, authoring_undo, AuthoringState,
 };
+use diagnostics::{diagnostics_record_frontend_error, diagnostics_summary};
 use native_viewport::{
     debug_three_viewport_benchmark_complete, debug_three_viewport_benchmark_spec,
-    native_viewport_create, native_viewport_focus_node, native_viewport_input,
-    native_viewport_isolate_node, native_viewport_load_scene, native_viewport_pick,
-    native_viewport_select, native_viewport_set_gizmo, native_viewport_set_layer_visibility,
+    native_viewport_create, native_viewport_create_dedicated, native_viewport_focus_node,
+    native_viewport_focus_window, native_viewport_input, native_viewport_isolate_node,
+    native_viewport_load_scene, native_viewport_open_dedicated_scene,
+    native_viewport_open_dedicated_world, native_viewport_pick, native_viewport_select,
+    native_viewport_set_gizmo, native_viewport_set_layer_visibility,
     native_viewport_set_node_visible, native_viewport_set_overlays, native_viewport_set_projection,
     native_viewport_set_rect, native_viewport_set_visible, native_viewport_show_all_nodes,
     native_viewport_shutdown, native_viewport_start_world_stream, native_viewport_stats,
@@ -706,7 +710,9 @@ fn core_error(error: impl std::fmt::Display) -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    diagnostics::init(RAGELAB_CORE_REVISION);
+
+    let result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(NativeViewportState::default())
         .manage(AuthoringState::default())
@@ -718,6 +724,7 @@ pub fn run() {
             #[cfg(debug_assertions)]
             {
                 native_viewport::maybe_start_debug_open(app.handle().clone());
+                native_viewport::maybe_start_debug_world_open(app.handle().clone());
                 native_viewport::maybe_start_debug_world_stream_smoke(
                     app.handle().clone(),
                     RAGELAB_CORE_REVISION,
@@ -748,6 +755,9 @@ pub fn run() {
             authoring_preview_world_overlay,
             authoring_close,
             native_viewport_create,
+            native_viewport_create_dedicated,
+            native_viewport_open_dedicated_scene,
+            native_viewport_open_dedicated_world,
             native_viewport_load_scene,
             native_viewport_start_world_stream,
             native_viewport_world_stream_at,
@@ -760,6 +770,7 @@ pub fn run() {
             native_viewport_pick,
             native_viewport_select,
             native_viewport_focus_node,
+            native_viewport_focus_window,
             native_viewport_set_node_visible,
             native_viewport_isolate_node,
             native_viewport_show_all_nodes,
@@ -775,10 +786,17 @@ pub fn run() {
             core_workspace_export_preflight,
             core_workspace_export,
             core_operation_plan,
-            core_operation_apply
+            core_operation_apply,
+            diagnostics_summary,
+            diagnostics_record_frontend_error
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running RageLab Studio");
+        .run(tauri::generate_context!());
+
+    if result.is_ok() {
+        diagnostics::mark_graceful_exit();
+    }
+
+    result.expect("error while running RageLab Studio");
 }
 
 #[cfg(test)]

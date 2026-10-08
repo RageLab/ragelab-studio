@@ -1,19 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import type { UnlistenFn } from "@tauri-apps/api/event";
-  import { getCurrentWindow } from "@tauri-apps/api/window";
 
   import {
-    createNativeViewport,
+    createDedicatedNativeViewport,
+    focusNativeViewportWindow,
     getNativeViewportStats,
     moveNativeWorldStream,
-    pickNativeViewport,
     selectNativeViewportNode,
-    sendNativeViewportInput,
     setNativeViewportOverlays,
     setNativeViewportProjection,
-    setNativeViewportRect,
-    setNativeViewportVisible,
     shutdownNativeViewport,
     startNativeWorldStream,
     type NativeViewportProjection,
@@ -27,66 +22,32 @@
   export let report: NativeViewportReport | null = null;
   export let onNativeFailure: ((message: string) => void) | null = null;
 
-  let container: HTMLButtonElement;
   let mounted = false;
   let initialized = false;
-  let loading = false;
+  let opening = false;
   let renderError = "";
   let projection: NativeViewportProjection = "perspective";
-  let grid = true;
+  let grid = false;
   let wireframe = false;
   let bounds = false;
   let collision = false;
   let previousSelectedNodeIndex: number | null = null;
-  let resizeObserver: ResizeObserver | null = null;
-  let rectFrame = 0;
-  let inputFrame = 0;
-  let streamTimer: ReturnType<typeof setTimeout> | null = null;
-  let streamGeneration = 0;
-  let dragMode: "look" | "pan" | null = null;
-  let pointerId: number | null = null;
-  let pointerMoved = false;
-  let pendingDeltaX = 0;
-  let pendingDeltaY = 0;
-  let unlistenWindowEvents: UnlistenFn[] = [];
-
-  const currentWindow = getCurrentWindow();
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
 
   onMount(() => {
     mounted = true;
-    void initialize();
+    void openMapWindow();
 
-    resizeObserver = new ResizeObserver(() => scheduleRectSync());
-    resizeObserver.observe(container);
-
-    const schedule = () => scheduleRectSync();
-    window.addEventListener("scroll", schedule, true);
-    window.addEventListener("resize", schedule);
-
-    void Promise.all([
-      currentWindow.onMoved(schedule),
-      currentWindow.onResized(schedule),
-      currentWindow.onScaleChanged(schedule),
-      currentWindow.onFocusChanged(({ payload }) => {
-        void setNativeViewportVisible(Boolean(payload) && initialized).catch(() => {});
-      }),
-    ]).then((listeners) => {
-      if (mounted) unlistenWindowEvents = listeners;
-      else listeners.forEach((unlisten) => unlisten());
-    });
+    pollTimer = setInterval(() => {
+      if (mounted && initialized && !opening) {
+        void refresh().catch(() => {});
+      }
+    }, 300);
 
     return () => {
       mounted = false;
-      window.removeEventListener("scroll", schedule, true);
-      window.removeEventListener("resize", schedule);
-      resizeObserver?.disconnect();
-      resizeObserver = null;
-      unlistenWindowEvents.forEach((unlisten) => unlisten());
-      unlistenWindowEvents = [];
-      if (rectFrame) cancelAnimationFrame(rectFrame);
-      if (inputFrame) cancelAnimationFrame(inputFrame);
-      if (streamTimer) clearTimeout(streamTimer);
-      void setNativeViewportVisible(false).catch(() => {});
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = null;
       void shutdownNativeViewport().catch(() => {});
     };
   });
@@ -98,35 +59,33 @@
   ) {
     previousSelectedNodeIndex = selectedNodeIndex;
     void selectNativeViewportNode(selectedNodeIndex)
-      .then((next) => {
-        report = next;
-      })
+      .then(applyReport)
       .catch(handleNativeError);
   }
 
-  async function initialize() {
+  async function openMapWindow() {
+    if (opening) return;
+    opening = true;
+    renderError = "";
+
     try {
-      renderError = "";
-      loading = true;
-      const width = Math.max(container.clientWidth, 1);
-      const height = Math.max(container.clientHeight, 1);
-      report = await createNativeViewport(width, height);
+      report = await createDedicatedNativeViewport(1280, 800);
       initialized = true;
-      await syncRect();
       await setNativeViewportOverlays(grid, wireframe, bounds, collision);
       report = await startNativeWorldStream({
         gameIndex,
         position: initialPosition,
-        loadRadius: 300,
-        retainRadius: 450,
-        maxActiveMaps: 8,
-        maxCpuChunks: 24,
+        loadRadius: 450,
+        retainRadius: 650,
+        maxActiveMaps: 12,
+        maxCpuChunks: 40,
       });
-      await setNativeViewportVisible(true);
+      applyReport(report);
     } catch (error) {
+      initialized = false;
       handleNativeError(error);
     } finally {
-      loading = false;
+      opening = false;
     }
   }
 
@@ -134,190 +93,49 @@
     position: [number, number, number],
     fitCamera = true,
   ) {
-    if (!initialized) return;
-    loading = true;
+    if (!initialized) {
+      await openMapWindow();
+      if (!initialized) return;
+    }
+    opening = true;
     try {
-      report = await moveNativeWorldStream(position, fitCamera);
+      applyReport(await moveNativeWorldStream(position, fitCamera));
       selectedNodeIndex = null;
       previousSelectedNodeIndex = null;
     } catch (error) {
       handleNativeError(error);
     } finally {
-      loading = false;
+      opening = false;
     }
   }
 
   export async function refresh() {
     if (!initialized) return;
     try {
-      report = await getNativeViewportStats();
-      selectedNodeIndex = report.stats.selectedNodeIndex;
-      previousSelectedNodeIndex = selectedNodeIndex;
-    } catch (error) {
-      handleNativeError(error);
+      applyReport(await getNativeViewportStats());
+    } catch {
+      initialized = false;
+      report = null;
     }
   }
 
-  function scheduleRectSync() {
-    if (!mounted || !initialized || rectFrame) return;
-    rectFrame = requestAnimationFrame(() => {
-      rectFrame = 0;
-      void syncRect().catch(handleNativeError);
-    });
-  }
-
-  async function syncRect() {
-    if (!container || !initialized) return;
-    const rect = container.getBoundingClientRect();
-    const scale = await currentWindow.scaleFactor();
-    const origin = await currentWindow.innerPosition();
-    const width = Math.max(Math.round(rect.width * scale), 1);
-    const height = Math.max(Math.round(rect.height * scale), 1);
-    const x = Math.round(origin.x + rect.left * scale);
-    const y = Math.round(origin.y + rect.top * scale);
-    const visible =
-      rect.bottom > 0 &&
-      rect.right > 0 &&
-      rect.top < window.innerHeight &&
-      rect.left < window.innerWidth;
-
-    if (!visible) {
-      await setNativeViewportVisible(false);
+  async function focusMap() {
+    if (!initialized) {
+      await openMapWindow();
       return;
     }
-
-    report = await setNativeViewportRect({ x, y, width, height });
-    await setNativeViewportVisible(true);
-  }
-
-  function pointerDown(event: PointerEvent) {
-    if (!initialized || event.button > 2) return;
-    container.focus();
-    pointerId = event.pointerId;
-    pointerMoved = false;
-    dragMode = event.button === 0 ? "look" : "pan";
-    container.setPointerCapture(event.pointerId);
-    event.preventDefault();
-  }
-
-  function pointerMove(event: PointerEvent) {
-    if (pointerId !== event.pointerId || !dragMode) return;
-    pendingDeltaX += event.movementX / Math.max(container.clientWidth, 1);
-    pendingDeltaY += event.movementY / Math.max(container.clientHeight, 1);
-    pointerMoved ||= Math.abs(event.movementX) + Math.abs(event.movementY) > 1;
-    scheduleInputFlush();
-    event.preventDefault();
-  }
-
-  function pointerUp(event: PointerEvent) {
-    if (pointerId !== event.pointerId) return;
-    if (container.hasPointerCapture(event.pointerId)) {
-      container.releasePointerCapture(event.pointerId);
-    }
-    const shouldPick = event.button === 0 && !pointerMoved;
-    pointerId = null;
-    dragMode = null;
-    if (shouldPick) void pickAt(event);
-    event.preventDefault();
-  }
-
-  function scheduleInputFlush() {
-    if (inputFrame) return;
-    inputFrame = requestAnimationFrame(() => {
-      inputFrame = 0;
-      const deltaX = pendingDeltaX;
-      const deltaY = pendingDeltaY;
-      pendingDeltaX = 0;
-      pendingDeltaY = 0;
-      const kind = dragMode;
-      if (!kind || (deltaX === 0 && deltaY === 0)) return;
-      void sendNativeViewportInput({ kind, deltaX, deltaY })
-        .then(applyInputReport)
-        .catch(handleNativeError);
-    });
-  }
-
-  function wheel(event: WheelEvent) {
-    if (!initialized) return;
-    event.preventDefault();
-    const delta = Math.max(-3, Math.min(3, event.deltaY / 240));
-    void sendNativeViewportInput({ kind: "zoom", delta })
-      .then(applyInputReport)
-      .catch(handleNativeError);
-  }
-
-  function keyDown(event: KeyboardEvent) {
-    if (!initialized || event.repeat) return;
-    const key = event.key.toLowerCase();
-    let forward = 0;
-    let right = 0;
-    let up = 0;
-    if (key === "w" || key === "arrowup") forward = 1;
-    else if (key === "s" || key === "arrowdown") forward = -1;
-    else if (key === "d" || key === "arrowright") right = 1;
-    else if (key === "a" || key === "arrowleft") right = -1;
-    else if (key === "e") up = 1;
-    else if (key === "q") up = -1;
-    else return;
-
-    const boost = event.shiftKey ? 3 : 1;
-    event.preventDefault();
-    void sendNativeViewportInput({
-      kind: "fly",
-      forward: forward * boost,
-      right: right * boost,
-      up: up * boost,
-    })
-      .then(applyInputReport)
-      .catch(handleNativeError);
-  }
-
-  function applyInputReport(next: NativeViewportReport) {
-    report = next;
-    selectedNodeIndex = next.stats.selectedNodeIndex;
-    previousSelectedNodeIndex = selectedNodeIndex;
-    scheduleStreamSync(next);
-  }
-
-  function scheduleStreamSync(next: NativeViewportReport) {
-    const eye = next.camera?.eye;
-    if (!eye || !initialized) return;
-    const generation = ++streamGeneration;
-    if (streamTimer) clearTimeout(streamTimer);
-    streamTimer = setTimeout(() => {
-      if (!mounted || !initialized || generation !== streamGeneration) return;
-      void moveNativeWorldStream(eye, false)
-        .then((streamed) => {
-          if (generation === streamGeneration) {
-            report = streamed;
-            selectedNodeIndex = streamed.stats.selectedNodeIndex;
-            previousSelectedNodeIndex = selectedNodeIndex;
-          }
-        })
-        .catch(handleNativeError);
-    }, 180);
-  }
-
-  async function pickAt(event: PointerEvent) {
-    const rect = container.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return;
     try {
-      const result = await pickNativeViewport(
-        (event.clientX - rect.left) / rect.width,
-        (event.clientY - rect.top) / rect.height,
-      );
-      report = result.viewport;
-      selectedNodeIndex = result.pick?.nodeIndex ?? null;
-      previousSelectedNodeIndex = selectedNodeIndex;
-    } catch (error) {
-      handleNativeError(error);
+      await focusNativeViewportWindow();
+    } catch {
+      initialized = false;
+      await openMapWindow();
     }
   }
 
   async function toggleProjection() {
     projection = projection === "perspective" ? "orthographic" : "perspective";
     try {
-      report = await setNativeViewportProjection(projection);
+      applyReport(await setNativeViewportProjection(projection));
     } catch (error) {
       handleNativeError(error);
     }
@@ -325,15 +143,24 @@
 
   async function updateOverlays() {
     try {
-      report = await setNativeViewportOverlays(grid, wireframe, bounds, collision);
+      applyReport(await setNativeViewportOverlays(grid, wireframe, bounds, collision));
     } catch (error) {
       handleNativeError(error);
     }
   }
 
+  function applyReport(next: NativeViewportReport) {
+    report = next;
+    const nativeSelection = next.stats.selectedNodeIndex;
+    if (nativeSelection !== selectedNodeIndex) {
+      previousSelectedNodeIndex = nativeSelection;
+      selectedNodeIndex = nativeSelection;
+    }
+  }
+
   function handleNativeError(error: unknown) {
     const message =
-      error instanceof Error ? error.message : String(error ?? "Native world viewport failed.");
+      error instanceof Error ? error.message : String(error ?? "Dedicated map window failed.");
     renderError = message;
     onNativeFailure?.(message);
   }
@@ -343,75 +170,86 @@
   }
 </script>
 
-<section class="world-viewport">
-  <div class="viewport-meta">
-    <div>
-      <p class="label">Native GTA world</p>
-      <div class="meta-line">
-        <span>{report?.streaming?.activeMaps ?? 0} maps</span>
-        <span>{report?.stats.instances ?? 0} instances</span>
-        <span>{mib(report?.streaming?.cpuCachedBytes ?? 0)} MiB CPU</span>
-        <span>{mib((report?.stats.gpuAssetCacheBytes ?? 0) + (report?.stats.gpuTextureCacheBytes ?? 0))} MiB GPU</span>
-        <span>{report?.streaming?.cacheHits ?? 0} chunk hits</span>
-        <span>{(report?.stats.lastFrameMs ?? 0).toFixed(2)} ms frame</span>
-        {#if selectedNodeIndex !== null}<span>selected #{selectedNodeIndex}</span>{/if}
-        {#if loading}<span>streaming…</span>{/if}
-      </div>
-    </div>
-    <div class="viewport-actions">
-      <button type="button" class:active={projection === "orthographic"} onclick={toggleProjection}>
-        {projection === "perspective" ? "Perspective" : "Orthographic"}
-      </button>
-      <button type="button" class:active={grid} onclick={() => { grid = !grid; void updateOverlays(); }}>Grid</button>
-      <button type="button" class:active={wireframe} onclick={() => { wireframe = !wireframe; void updateOverlays(); }}>Wire</button>
-      <button type="button" class:active={bounds} onclick={() => { bounds = !bounds; void updateOverlays(); }}>Bounds</button>
-      <button type="button" class:active={collision} onclick={() => { collision = !collision; void updateOverlays(); }}>Collision</button>
-      <button type="button" onclick={() => void refresh()}>Stats</button>
-    </div>
+<section class="map-controller">
+  <div class="map-copy">
+    <p class="label">Dedicated native map</p>
+    <h3>{initialized ? "Map is open in its own window" : opening ? "Opening map window…" : "Map window is closed"}</h3>
+    <p>
+      The renderer no longer sits on top of this HTML page. Resize, move and maximize the
+      separate <strong>RageLab Map</strong> window without DOM-position synchronization.
+    </p>
   </div>
 
-  {#if renderError}<div class="render-error" role="alert">{renderError}</div>{/if}
-
-  <button
-    type="button"
-    class="viewport"
-    bind:this={container}
-    aria-label="RageLab streamed GTA world viewport"
-    onpointerdown={pointerDown}
-    onpointermove={pointerMove}
-    onpointerup={pointerUp}
-    onpointercancel={pointerUp}
-    oncontextmenu={(event) => event.preventDefault()}
-    onwheel={wheel}
-    onkeydown={keyDown}
-  >
-    {#if !initialized || loading}
-      <span class="viewport-overlay">{initialized ? "Streaming world…" : "Starting native renderer…"}</span>
-    {/if}
-  </button>
-
-  <div class="viewport-hint">
-    Left drag look · right/middle drag pan · wheel zoom · camera-relative WASD/QE · click entity
+  <div class="map-actions">
+    <button class="primary" type="button" onclick={() => void focusMap()} disabled={opening}>
+      {initialized ? "Bring map to front" : "Open map window"}
+    </button>
+    <button type="button" class:active={projection === "orthographic"} onclick={() => void toggleProjection()} disabled={!initialized}>
+      {projection === "perspective" ? "Perspective" : "Orthographic"}
+    </button>
+    <button type="button" class:active={grid} onclick={() => { grid = !grid; void updateOverlays(); }} disabled={!initialized}>Grid</button>
+    <button type="button" class:active={wireframe} onclick={() => { wireframe = !wireframe; void updateOverlays(); }} disabled={!initialized}>Wire</button>
+    <button type="button" class:active={bounds} onclick={() => { bounds = !bounds; void updateOverlays(); }} disabled={!initialized}>Bounds</button>
+    <button type="button" class:active={collision} onclick={() => { collision = !collision; void updateOverlays(); }} disabled={!initialized}>Collision</button>
   </div>
+
+  {#if report}
+    <div class="stats">
+      <span>{report.streaming?.activeMaps ?? 0} maps</span>
+      <span>{report.stats.instances} instances</span>
+      <span>{report.streaming?.compiledPages ?? 0} pages ready</span>
+      {#if (report.streaming?.pendingPages ?? 0) > 0}
+        <span class="coverage-warning" title="The world is loading additional geometry pages.">
+          Loading: {report.streaming?.pendingPages ?? 0} pages / {report.streaming?.spatialOmittedNodes ?? 0} nodes remaining
+        </span>
+      {/if}
+      {#if (report.streaming?.failedPages ?? 0) > 0}
+        <span class="coverage-warning" title="Some world pages failed to compile. See diagnostics.">
+          Failed: {report.streaming?.failedPages ?? 0} pages
+        </span>
+      {/if}
+      {#if (report.streaming?.renderOmittedAssets ?? 0) > 0 || (report.streaming?.renderOmittedGeometry ?? 0) > 0}
+        <span class="coverage-warning" title="The renderer omitted geometry due to a budget limit.">
+          Omitted: {report.streaming?.renderOmittedAssets ?? 0} assets,
+          {report.streaming?.renderOmittedGeometry ?? 0} meshes
+        </span>
+      {/if}
+      <span>{mib(report.streaming?.cpuCachedBytes ?? 0)} MiB CPU</span>
+      <span>{mib(report.stats.gpuAssetCacheBytes + report.stats.gpuTextureCacheBytes)} MiB GPU</span>
+      <span>{report.stats.lastFrameMs.toFixed(2)} ms frame</span>
+      {#if selectedNodeIndex !== null}<span>selected #{selectedNodeIndex}</span>{/if}
+    </div>
+  {/if}
+
+  {#if renderError}
+    <div class="render-error" role="alert">{renderError}</div>
+  {/if}
+
+  <p class="hint">
+    Map window: left drag look · right/middle drag pan · WASD/QE fly · Shift = faster · +/- zoom · Esc closes it.
+  </p>
 </section>
 
 <style>
-  .world-viewport { border: 1px solid #292e35; border-radius: 10px; overflow: hidden; background: #0a0c0f; }
-  .viewport-meta { min-height: 58px; padding: 10px 12px; border-bottom: 1px solid #292e35; background: #12151a; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-  .label { margin: 0 0 5px; color: #7d838c; font-size: 11px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
-  .meta-line,.viewport-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-  .meta-line span { padding: 3px 6px; border: 1px solid #2d3239; border-radius: 5px; color: #9299a3; font-size: 10px; }
-  .viewport-actions { justify-content: flex-end; }
-  .viewport-actions button { border: 1px solid #30363f; border-radius: 5px; background: #181c22; color: #858c96; padding: 5px 7px; font: inherit; font-size: 10px; cursor: pointer; }
-  .viewport-actions button:hover,.viewport-actions button.active { border-color: #526170; color: #c0c8d2; background: #20262d; }
-  .viewport { position: relative; width: 100%; height: min(58vh,560px); min-height: 400px; padding: 0; border: 0; outline: none; background: #0a0c0f; color: inherit; font: inherit; text-align: left; cursor: crosshair; }
-  .viewport:focus-visible { box-shadow: inset 0 0 0 1px #526170; }
-  .viewport-overlay { position: absolute; inset: 0; display: grid; place-items: center; color: #7d858f; font-size: 11px; pointer-events: none; }
-  .viewport-hint { padding: 7px 12px; border-top: 1px solid #292e35; color: #626a74; background: #111419; font-size: 10px; }
-  .render-error { padding: 10px 14px; border-bottom: 1px solid #493027; background: #1c1411; color: #d2a187; font-size: 11px; }
-  @media (max-width: 700px) {
-    .viewport-meta { display: grid; }
-    .viewport-actions { justify-content: flex-start; }
-    .viewport { height: 360px; min-height: 300px; }
+  .map-controller {
+    min-height: 160px;
+    padding: 16px;
+    border: 1px solid #29313a;
+    border-radius: 10px;
+    background: #0f1216;
+    display: grid;
+    gap: 12px;
   }
+  .label { margin: 0 0 5px; color: #7d838c; font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+  h3 { margin: 0; font-size: 17px; }
+  .map-copy p:not(.label) { margin: 7px 0 0; max-width: 680px; color: #858d98; font-size: 11px; line-height: 1.5; }
+  .map-actions,.stats { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  button { border:1px solid #30363f; border-radius:6px; background:#171b20; color:#aeb5be; padding:7px 9px; font:inherit; font-size:10px; cursor:pointer; }
+  button:hover:not(:disabled),button.active { border-color:#526170; background:#20262d; color:#d0d6dd; }
+  button.primary { border-color:#e5e7eb; background:#f3f4f6; color:#111318; font-weight:700; }
+  button:disabled { opacity:.45; cursor:default; }
+  .stats span { padding:3px 6px; border:1px solid #2d3239; border-radius:5px; color:#9299a3; font-size:9px; }
+  .stats span.coverage-warning { border-color:#846237; color:#e2b576; }
+  .hint { margin:0; color:#69717c; font-size:9px; }
+  .render-error { padding:9px 10px; border:1px solid #493027; border-radius:6px; background:#1c1411; color:#d2a187; font-size:10px; }
 </style>

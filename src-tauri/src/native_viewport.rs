@@ -1,7 +1,7 @@
 use std::{
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver, Sender},
         Arc, Mutex,
     },
@@ -12,7 +12,8 @@ use std::{
 use ragelab_engine::{
     workspace_scene_render_package_with_game_index, GtaRpfBrowserSearchReport, GtaRpfWorldPoint,
     RenderPackage, RenderPackageOptions, SceneAssetPreviewSources, SceneGameIndexSource,
-    WorldStreamConfig, WorldStreamReport, WorldStreamView, WorldStreamingRuntime,
+    WorldStreamConfig, WorldStreamReport, WorldStreamUpdate, WorldStreamView,
+    WorldStreamingRuntime,
 };
 use ragelab_render::{
     CameraSnapshot, GpuCacheBudget, PickResult, Projection, SurfaceRenderer, TransformGizmoMode,
@@ -22,14 +23,19 @@ use serde::{Deserialize, Serialize};
 use tauri::{Manager, PhysicalPosition, PhysicalSize, Window, WindowEvent};
 
 use super::{validate_workspace_scene_context, SceneGameIndexRequest, WorkspaceSceneRequest};
+use crate::diagnostics;
 
 const NATIVE_VIEWPORT_LABEL: &str = "native-viewport";
+static NATIVE_VIEWPORT_GENERATION: AtomicU64 = AtomicU64::new(1);
 const RENDER_THREAD_READY_TIMEOUT: Duration = Duration::from_secs(30);
+const WORLD_CAMERA_FOCUS_RADIUS: f32 = 120.0;
 const RENDER_COMMAND_TIMEOUT: Duration = Duration::from_secs(180);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NativeViewportWindowMode {
     Overlay,
+    Dedicated,
+    DedicatedLoading,
     Standalone,
 }
 
@@ -145,6 +151,7 @@ pub(crate) struct NativeWorldStreamStartRequest {
     load_radius: Option<f32>,
     retain_radius: Option<f32>,
     max_active_maps: Option<usize>,
+    max_chunk_loads_per_update: Option<usize>,
     max_cpu_chunks: Option<usize>,
     max_cpu_bytes: Option<u64>,
     max_gpu_assets: Option<u32>,
@@ -203,10 +210,21 @@ pub(crate) struct NativeViewportPickReport {
     viewport: NativeViewportReport,
 }
 
+struct BackgroundWorldUpdate {
+    position: [f32; 3],
+    elapsed_ms: f64,
+    result: Result<WorldStreamUpdate, String>,
+}
+
 struct ActiveWorldStream {
-    runtime: WorldStreamingRuntime,
+    runtime: Arc<Mutex<WorldStreamingRuntime>>,
     report: WorldStreamReport,
-    last_target: [f32; 3],
+    last_stream_position: [f32; 3],
+    last_stream_sync: Instant,
+    updates_tx: Sender<BackgroundWorldUpdate>,
+    updates_rx: Receiver<BackgroundWorldUpdate>,
+    update_in_flight: Arc<AtomicBool>,
+    wake_sender: Sender<RenderCommand>,
 }
 
 enum RenderCommand {
@@ -245,6 +263,7 @@ enum RenderCommand {
     StopWorldStream {
         reply: Sender<Result<NativeViewportReport, String>>,
     },
+    ApplyWorldStreamUpdates,
     Resize {
         width: u32,
         height: u32,
@@ -270,6 +289,16 @@ enum RenderCommand {
         reply: Sender<Result<NativeViewportReport, String>>,
     },
     Fly {
+        forward: f32,
+        right: f32,
+        up: f32,
+        reply: Sender<Result<NativeViewportReport, String>>,
+    },
+    InputFrame {
+        look_x: f32,
+        look_y: f32,
+        pan_x: f32,
+        pan_y: f32,
         forward: f32,
         right: f32,
         up: f32,
@@ -338,6 +367,157 @@ pub(crate) async fn native_viewport_create(
     create_native_viewport(app, state, request, NativeViewportWindowMode::Overlay).await
 }
 
+#[tauri::command]
+pub(crate) async fn native_viewport_create_dedicated(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NativeViewportState>,
+    request: NativeViewportCreateRequest,
+) -> Result<NativeViewportReport, String> {
+    if state.smoke_active.load(Ordering::Acquire) {
+        return Err("Native viewport is reserved by an active smoke run".into());
+    }
+    create_native_viewport(app, state, request, NativeViewportWindowMode::Dedicated).await
+}
+
+#[tauri::command]
+pub(crate) async fn native_viewport_open_dedicated_scene(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NativeViewportState>,
+    request: WorkspaceSceneRequest,
+) -> Result<NativeViewportReport, String> {
+    diagnostics::record_event(
+        "map",
+        "open_scene_requested",
+        serde_json::json!({
+            "workspace": request.workspace,
+            "ymap": request.ymap,
+        }),
+    );
+
+    if let Err(error) = create_native_viewport(
+        app.clone(),
+        state,
+        NativeViewportCreateRequest {
+            width: 1280,
+            height: 800,
+        },
+        NativeViewportWindowMode::DedicatedLoading,
+    )
+    .await
+    {
+        diagnostics::record_fatal(
+            "map",
+            "create_scene_window_failed",
+            serde_json::json!({ "error": error }),
+        );
+        return Err(error);
+    }
+
+    let load_started = Instant::now();
+    let app_for_load = app.clone();
+    let request_for_load = request.clone();
+    let loaded = tauri::async_runtime::spawn_blocking(move || {
+        load_native_viewport_scene_blocking(&app_for_load, request_for_load)
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+
+    match loaded {
+        Ok(report) => {
+            native_viewport_focus_window(app.state::<NativeViewportState>())?;
+            diagnostics::record_event(
+                "map",
+                "scene_opened",
+                serde_json::json!({
+                    "instances": report.stats.instances,
+                    "sceneLoadMs": report.stats.scene_load_ms,
+                    "openWallMs": load_started.elapsed().as_secs_f64() * 1000.0,
+                }),
+            );
+            Ok(report)
+        }
+        Err(error) => {
+            diagnostics::record_fatal(
+                "map",
+                "scene_load_failed",
+                serde_json::json!({ "error": error }),
+            );
+            let _ = shutdown_native_viewport(&app.state::<NativeViewportState>());
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn native_viewport_open_dedicated_world(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, NativeViewportState>,
+    request: NativeWorldStreamStartRequest,
+) -> Result<NativeViewportReport, String> {
+    diagnostics::record_event(
+        "map",
+        "open_world_requested",
+        serde_json::json!({
+            "gameRoot": request.game_index.game_root,
+            "index": request.game_index.index,
+            "position": request.position,
+        }),
+    );
+
+    if let Err(error) = create_native_viewport(
+        app.clone(),
+        state,
+        NativeViewportCreateRequest {
+            width: 1280,
+            height: 800,
+        },
+        NativeViewportWindowMode::DedicatedLoading,
+    )
+    .await
+    {
+        diagnostics::record_fatal(
+            "map",
+            "create_world_window_failed",
+            serde_json::json!({ "error": error }),
+        );
+        return Err(error);
+    }
+
+    let load_started = Instant::now();
+    let app_for_stream = app.clone();
+    let request_for_stream = request.clone();
+    let started = tauri::async_runtime::spawn_blocking(move || {
+        start_native_world_stream_blocking(&app_for_stream, request_for_stream)
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+
+    match started {
+        Ok(report) => {
+            native_viewport_focus_window(app.state::<NativeViewportState>())?;
+            diagnostics::record_event(
+                "map",
+                "world_opened",
+                serde_json::json!({
+                    "activeMaps": report.streaming.as_ref().map(|stream| stream.active_maps),
+                    "instances": report.stats.instances,
+                    "openWallMs": load_started.elapsed().as_secs_f64() * 1000.0,
+                }),
+            );
+            Ok(report)
+        }
+        Err(error) => {
+            diagnostics::record_fatal(
+                "map",
+                "world_stream_start_failed",
+                serde_json::json!({ "error": error }),
+            );
+            let _ = shutdown_native_viewport(&app.state::<NativeViewportState>());
+            Err(error)
+        }
+    }
+}
+
 async fn create_native_viewport(
     app: tauri::AppHandle,
     state: tauri::State<'_, NativeViewportState>,
@@ -360,7 +540,19 @@ async fn create_native_viewport(
         runtime.shutdown();
     }
 
-    let builder = tauri::window::WindowBuilder::new(&app, NATIVE_VIEWPORT_LABEL)
+    let generation = NATIVE_VIEWPORT_GENERATION.fetch_add(1, Ordering::Relaxed);
+    let window_label = format!("{NATIVE_VIEWPORT_LABEL}-{generation}");
+    diagnostics::record_event(
+        "renderer",
+        "window_create_requested",
+        serde_json::json!({
+            "label": window_label,
+            "mode": format!("{mode:?}"),
+            "width": request.width,
+            "height": request.height,
+        }),
+    );
+    let builder = tauri::window::WindowBuilder::new(&app, window_label)
         .inner_size(f64::from(request.width), f64::from(request.height));
 
     let builder = match mode {
@@ -379,6 +571,24 @@ async fn create_native_viewport(
                 .parent(&parent)
                 .map_err(core_error)?
         }
+        NativeViewportWindowMode::Dedicated => builder
+            .title("RageLab Map")
+            .center()
+            .decorations(true)
+            .shadow(true)
+            .skip_taskbar(false)
+            .resizable(true)
+            .focused(true)
+            .visible(true),
+        NativeViewportWindowMode::DedicatedLoading => builder
+            .title("RageLab Map")
+            .center()
+            .decorations(true)
+            .shadow(true)
+            .skip_taskbar(false)
+            .resizable(true)
+            .focused(false)
+            .visible(false),
         NativeViewportWindowMode::Standalone => builder
             .title(
                 "RageLab Native YMAP Viewer — LMB look · RMB/MMB pan · WASD/QE fly · +/- zoom · Esc close",
@@ -392,31 +602,115 @@ async fn create_native_viewport(
             .visible(true),
     };
 
-    let window = builder.build().map_err(core_error)?;
+    let window = builder.build().map_err(|error| {
+        diagnostics::record_fatal(
+            "renderer",
+            "window_build_failed",
+            serde_json::json!({ "error": error.to_string(), "mode": format!("{mode:?}") }),
+        );
+        core_error(error)
+    })?;
+    diagnostics::record_event(
+        "renderer",
+        "window_created",
+        serde_json::json!({ "label": window.label(), "mode": format!("{mode:?}") }),
+    );
     match mode {
         NativeViewportWindowMode::Overlay => {
             window.set_ignore_cursor_events(true).map_err(core_error)?;
         }
-        NativeViewportWindowMode::Standalone => {
+        NativeViewportWindowMode::Dedicated
+        | NativeViewportWindowMode::DedicatedLoading
+        | NativeViewportWindowMode::Standalone => {
             window.set_ignore_cursor_events(false).map_err(core_error)?;
-            window.set_focus().map_err(core_error)?;
+            if mode != NativeViewportWindowMode::DedicatedLoading {
+                window.set_focus().map_err(core_error)?;
+            }
         }
     }
 
     let (sender, receiver) = mpsc::channel();
     let (ready_sender, ready_receiver) = mpsc::channel();
+    let window_alive = Arc::new(AtomicBool::new(true));
+    let render_window_alive = window_alive.clone();
+    let render_command_sender = sender.clone();
     let render_target = window.clone();
+    let render_label = window.label().to_string();
     let thread = thread::Builder::new()
         .name("ragelab-native-viewport".into())
-        .spawn(move || render_thread(render_target, options, receiver, ready_sender))
-        .map_err(core_error)?;
+        .spawn(move || {
+            diagnostics::record_event(
+                "renderer",
+                "thread_started",
+                serde_json::json!({ "window": render_label }),
+            );
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                render_thread(
+                    render_target,
+                    options,
+                    receiver,
+                    ready_sender,
+                    render_window_alive,
+                    render_command_sender,
+                );
+            }));
+            if result.is_err() {
+                diagnostics::record_fatal(
+                    "renderer",
+                    "thread_panicked",
+                    serde_json::json!({ "window": render_label }),
+                );
+            } else {
+                diagnostics::record_event(
+                    "renderer",
+                    "thread_exited",
+                    serde_json::json!({ "window": render_label }),
+                );
+            }
+        })
+        .map_err(|error| {
+            diagnostics::record_fatal(
+                "renderer",
+                "thread_spawn_failed",
+                serde_json::json!({ "error": error.to_string() }),
+            );
+            core_error(error)
+        })?;
 
     let ready = ready_receiver
         .recv_timeout(RENDER_THREAD_READY_TIMEOUT)
-        .map_err(|error| format!("Native viewport renderer did not initialize: {error}"))??;
+        .map_err(|error| {
+            let message = format!("Native viewport renderer did not initialize: {error}");
+            diagnostics::record_fatal(
+                "renderer",
+                "ready_timeout",
+                serde_json::json!({ "error": message }),
+            );
+            message
+        })?
+        .map_err(|error| {
+            diagnostics::record_fatal(
+                "renderer",
+                "initialization_failed",
+                serde_json::json!({ "error": error }),
+            );
+            error
+        })?;
+    diagnostics::record_event(
+        "renderer",
+        "ready",
+        serde_json::json!({
+            "instances": ready.stats.instances,
+            "frameMs": ready.stats.last_frame_ms,
+        }),
+    );
 
+    let interactive = mode != NativeViewportWindowMode::Overlay;
+    let input_stop = interactive.then(|| Arc::new(AtomicBool::new(false)));
     let event_sender = sender.clone();
     let event_app = app.clone();
+    let event_input_stop = input_stop.clone();
+    let event_window_alive = window_alive.clone();
     window.on_window_event(move |event| match event {
         WindowEvent::Resized(size) => {
             let _ = event_sender.send(RenderCommand::Resize {
@@ -433,6 +727,15 @@ async fn create_native_viewport(
             });
         }
         WindowEvent::Destroyed => {
+            event_window_alive.store(false, Ordering::Release);
+            diagnostics::record_event(
+                "renderer",
+                "window_destroyed",
+                serde_json::json!({ "mode": format!("{mode:?}") }),
+            );
+            if let Some(stop) = &event_input_stop {
+                stop.store(true, Ordering::Release);
+            }
             let _ = event_sender.send(RenderCommand::Shutdown);
             if mode == NativeViewportWindowMode::Standalone {
                 event_app.exit(0);
@@ -441,13 +744,10 @@ async fn create_native_viewport(
         _ => {}
     });
 
-    let (input_stop, input_thread) = if mode == NativeViewportWindowMode::Standalone {
-        let stop = Arc::new(AtomicBool::new(false));
-        let input_thread =
-            spawn_standalone_input_thread(window.clone(), sender.clone(), stop.clone())?;
-        (Some(stop), input_thread)
+    let input_thread = if let Some(stop) = input_stop.as_ref() {
+        spawn_standalone_input_thread(window.clone(), sender.clone(), stop.clone())?
     } else {
-        (None, None)
+        None
     };
 
     let mut runtime = state
@@ -495,6 +795,7 @@ fn spawn_standalone_input_thread(
             let mut plus_was_down = false;
             let mut minus_was_down = false;
             let mut escape_was_down = false;
+            let mut last_motion_sample = Instant::now();
 
             while !stop.load(Ordering::Acquire) {
                 let focused = unsafe { GetForegroundWindow() == hwnd };
@@ -502,6 +803,7 @@ fn spawn_standalone_input_thread(
                     last_cursor = None;
                     left_was_down = false;
                     left_dragged = false;
+                    last_motion_sample = Instant::now();
                     thread::sleep(Duration::from_millis(16));
                     continue;
                 }
@@ -514,6 +816,10 @@ fn spawn_standalone_input_thread(
                 let left_down = key_down(VK_LBUTTON as i32);
                 let right_down = key_down(VK_RBUTTON as i32);
                 let middle_down = key_down(VK_MBUTTON as i32);
+                let mut look_x = 0.0_f32;
+                let mut look_y = 0.0_f32;
+                let mut pan_x = 0.0_f32;
+                let mut pan_y = 0.0_f32;
 
                 if cursor_valid {
                     if let (Some((last_x, last_y)), Some(size)) = (last_cursor, size) {
@@ -524,17 +830,11 @@ fn spawn_standalone_input_thread(
 
                         if left_down && (dx != 0 || dy != 0) {
                             left_dragged |= dx.abs() + dy.abs() > 1;
-                            send_detached(&sender, |reply| RenderCommand::Look {
-                                delta_x: normalized_x,
-                                delta_y: normalized_y,
-                                reply,
-                            });
+                            look_x = normalized_x;
+                            look_y = normalized_y;
                         } else if (right_down || middle_down) && (dx != 0 || dy != 0) {
-                            send_detached(&sender, |reply| RenderCommand::Pan {
-                                delta_x: normalized_x,
-                                delta_y: normalized_y,
-                                reply,
-                            });
+                            pan_x = normalized_x;
+                            pan_y = normalized_y;
                         }
                     }
 
@@ -557,6 +857,13 @@ fn spawn_standalone_input_thread(
                     last_cursor = Some((point.x, point.y));
                 }
 
+                let motion_now = Instant::now();
+                let delta_seconds = motion_now
+                    .duration_since(last_motion_sample)
+                    .as_secs_f32()
+                    .clamp(0.001, 0.05);
+                last_motion_sample = motion_now;
+
                 let mut forward = 0.0_f32;
                 let mut right = 0.0_f32;
                 let mut up = 0.0_f32;
@@ -578,18 +885,34 @@ fn spawn_standalone_input_thread(
                 if key_down('Q' as i32) {
                     up -= 1.0;
                 }
-                if forward != 0.0 || right != 0.0 || up != 0.0 {
-                    let speed = if key_down(VK_SHIFT as i32) {
-                        0.25
-                    } else {
-                        0.08
-                    };
-                    send_detached(&sender, |reply| RenderCommand::Fly {
-                        forward: forward * speed,
-                        right: right * speed,
-                        up: up * speed,
+
+                let movement_rate = if key_down(VK_SHIFT as i32) {
+                    15.625
+                } else {
+                    5.0
+                };
+                let movement_scale = movement_rate * delta_seconds;
+                let has_continuous_input = look_x != 0.0
+                    || look_y != 0.0
+                    || pan_x != 0.0
+                    || pan_y != 0.0
+                    || forward != 0.0
+                    || right != 0.0
+                    || up != 0.0;
+
+                if has_continuous_input
+                    && !send_paced_input(&sender, |reply| RenderCommand::InputFrame {
+                        look_x,
+                        look_y,
+                        pan_x,
+                        pan_y,
+                        forward: forward * movement_scale,
+                        right: right * movement_scale,
+                        up: up * movement_scale,
                         reply,
-                    });
+                    })
+                {
+                    break;
                 }
 
                 let plus_down = key_down(VK_OEM_PLUS as i32) || key_down(VK_ADD as i32);
@@ -615,7 +938,11 @@ fn spawn_standalone_input_thread(
                 escape_was_down = escape_down;
 
                 left_was_down = left_down;
-                thread::sleep(Duration::from_millis(16));
+                thread::sleep(Duration::from_millis(if has_continuous_input {
+                    1
+                } else {
+                    8
+                }));
             }
         })
         .map_err(core_error)?;
@@ -640,18 +967,38 @@ fn send_detached(
     let _ = sender.send(build(reply));
 }
 
+fn send_paced_input(
+    sender: &Sender<RenderCommand>,
+    build: impl FnOnce(Sender<Result<NativeViewportReport, String>>) -> RenderCommand,
+) -> bool {
+    let (reply, receive) = mpsc::channel();
+    if sender.send(build(reply)).is_err() {
+        return false;
+    }
+    receive.recv().is_ok()
+}
+
 fn send_detached_pick(sender: &Sender<RenderCommand>, x: f32, y: f32) {
     let (reply, _receive) = mpsc::channel();
     let _ = sender.send(RenderCommand::Pick { x, y, reply });
 }
 
 #[tauri::command]
-pub(crate) fn native_viewport_load_scene(
-    state: tauri::State<'_, NativeViewportState>,
+pub(crate) async fn native_viewport_load_scene(
+    app: tauri::AppHandle,
+    request: WorkspaceSceneRequest,
+) -> Result<NativeViewportReport, String> {
+    tauri::async_runtime::spawn_blocking(move || load_native_viewport_scene_blocking(&app, request))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn load_native_viewport_scene_blocking(
+    app: &tauri::AppHandle,
     request: WorkspaceSceneRequest,
 ) -> Result<NativeViewportReport, String> {
     let package = build_workspace_render_package(&request)?;
-    load_render_package(&state, package)
+    load_render_package(&app.state::<NativeViewportState>(), package)
 }
 
 pub(crate) fn load_render_package(
@@ -704,8 +1051,17 @@ fn build_workspace_render_package(
 }
 
 #[tauri::command]
-pub(crate) fn native_viewport_start_world_stream(
-    state: tauri::State<'_, NativeViewportState>,
+pub(crate) async fn native_viewport_start_world_stream(
+    app: tauri::AppHandle,
+    request: NativeWorldStreamStartRequest,
+) -> Result<NativeViewportReport, String> {
+    tauri::async_runtime::spawn_blocking(move || start_native_world_stream_blocking(&app, request))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn start_native_world_stream_blocking(
+    app: &tauri::AppHandle,
     request: NativeWorldStreamStartRequest,
 ) -> Result<NativeViewportReport, String> {
     let source = validate_world_stream_source(&request.game_index)?;
@@ -718,6 +1074,9 @@ pub(crate) fn native_viewport_start_world_stream(
     }
     if let Some(value) = request.max_active_maps {
         config.max_active_maps = value;
+    }
+    if let Some(value) = request.max_chunk_loads_per_update {
+        config.max_chunk_loads_per_update = value;
     }
     if let Some(value) = request.max_cpu_chunks {
         config.max_cpu_chunks = value;
@@ -741,7 +1100,7 @@ pub(crate) fn native_viewport_start_world_stream(
     gpu_budget.validate().map_err(|error| error.to_string())?;
     let position = world_point(request.position)?;
 
-    with_runtime(&state, |runtime| {
+    with_runtime(&app.state::<NativeViewportState>(), |runtime| {
         request_report(&runtime.sender, |reply| RenderCommand::StartWorldStream {
             source,
             config: Box::new(config),
@@ -753,12 +1112,21 @@ pub(crate) fn native_viewport_start_world_stream(
 }
 
 #[tauri::command]
-pub(crate) fn native_viewport_world_stream_at(
-    state: tauri::State<'_, NativeViewportState>,
+pub(crate) async fn native_viewport_world_stream_at(
+    app: tauri::AppHandle,
+    request: NativeWorldStreamAtRequest,
+) -> Result<NativeViewportReport, String> {
+    tauri::async_runtime::spawn_blocking(move || stream_native_world_at_blocking(&app, request))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn stream_native_world_at_blocking(
+    app: &tauri::AppHandle,
     request: NativeWorldStreamAtRequest,
 ) -> Result<NativeViewportReport, String> {
     let position = world_point(request.position)?;
-    with_runtime(&state, |runtime| {
+    with_runtime(&app.state::<NativeViewportState>(), |runtime| {
         request_report(&runtime.sender, |reply| RenderCommand::WorldStreamAt {
             position,
             fit_camera: request.fit_camera,
@@ -1085,6 +1453,17 @@ pub(crate) fn native_viewport_set_visible(
 }
 
 #[tauri::command]
+pub(crate) fn native_viewport_focus_window(
+    state: tauri::State<'_, NativeViewportState>,
+) -> Result<(), String> {
+    with_runtime(&state, |runtime| {
+        runtime.window.show().map_err(core_error)?;
+        runtime.window.set_focus().map_err(core_error)?;
+        Ok(())
+    })
+}
+
+#[tauri::command]
 pub(crate) fn native_viewport_stats(
     state: tauri::State<'_, NativeViewportState>,
 ) -> Result<NativeViewportReport, String> {
@@ -1185,6 +1564,8 @@ fn render_thread(
     options: ViewportOptions,
     receiver: Receiver<RenderCommand>,
     ready: Sender<Result<NativeViewportReport, String>>,
+    window_alive: Arc<AtomicBool>,
+    command_sender: Sender<RenderCommand>,
 ) {
     let mut renderer = match SurfaceRenderer::new(target, options) {
         Ok(renderer) => renderer,
@@ -1199,6 +1580,14 @@ fn render_thread(
     let mut streaming: Option<ActiveWorldStream> = None;
 
     while let Ok(command) = receiver.recv() {
+        if !window_alive.load(Ordering::Acquire) {
+            diagnostics::record_event(
+                "renderer",
+                "command_loop_cancelled_after_window_destroy",
+                serde_json::json!({}),
+            );
+            break;
+        }
         match command {
             RenderCommand::Load { package, reply } => {
                 streaming = None;
@@ -1234,35 +1623,123 @@ fn render_thread(
                 gpu_budget,
                 reply,
             } => {
+                let total_started = Instant::now();
+                diagnostics::record_event(
+                    "world_stream",
+                    "start",
+                    serde_json::json!({
+                        "position": [position.x, position.y, position.z],
+                    }),
+                );
                 let result = (|| -> Result<NativeViewportReport, String> {
                     renderer
                         .set_gpu_cache_budget(gpu_budget)
                         .map_err(|error| error.to_string())?;
+
+                    let local_camera_radius = WORLD_CAMERA_FOCUS_RADIUS;
+                    let open_started = Instant::now();
                     let mut runtime =
                         WorldStreamingRuntime::open(source, *config).map_err(core_error)?;
+                    diagnostics::record_event(
+                        "world_stream",
+                        "runtime_opened",
+                        serde_json::json!({
+                            "elapsedMs": open_started.elapsed().as_secs_f64() * 1000.0,
+                        }),
+                    );
+
+                    let query_started = Instant::now();
                     let update = runtime
                         .update(WorldStreamView::at(position))
                         .map_err(core_error)?;
-                    let package = update.package.ok_or_else(|| {
-                        "World stream query produced no renderable package at the requested position"
+                    diagnostics::record_event(
+                        "world_stream",
+                        "initial_query_complete",
+                        serde_json::json!({
+                            "elapsedMs": query_started.elapsed().as_secs_f64() * 1000.0,
+                            "activeMaps": update.report.active_maps,
+                            "cpuCachedBytes": update.report.cpu_cached_bytes,
+                        }),
+                    );
+
+                    let packages = update.packages.ok_or_else(|| {
+                        "World stream query produced no renderable packages at the requested position"
                             .to_string()
                     })?;
+                    if packages.is_empty() {
+                        return Err(
+                            "World stream query produced no renderable packages at the requested position"
+                                .to_string(),
+                        );
+                    }
+
+                    if !window_alive.load(Ordering::Acquire) {
+                        diagnostics::record_event(
+                            "world_stream",
+                            "initial_load_cancelled_window_closed",
+                            serde_json::json!({
+                                "totalMs": total_started.elapsed().as_secs_f64() * 1000.0,
+                            }),
+                        );
+                        return Err("Native viewport window closed during world load".into());
+                    }
+
+                    let upload_started = Instant::now();
+                    renderer.set_overlays(false, false, false);
+                    renderer.set_collision_overlay(false);
                     renderer
-                        .set_package(package)
-                        .and_then(|_| renderer.render_frame())
+                        .update_streaming_packages(packages)
                         .map_err(|error| error.to_string())?;
+                    renderer.focus_world_position(
+                        [position.x, position.y, position.z],
+                        local_camera_radius,
+                    );
+                    renderer.render_frame().map_err(|error| error.to_string())?;
+                    diagnostics::record_event(
+                        "world_stream",
+                        "initial_frame_rendered",
+                        serde_json::json!({
+                            "elapsedMs": upload_started.elapsed().as_secs_f64() * 1000.0,
+                            "totalMs": total_started.elapsed().as_secs_f64() * 1000.0,
+                        }),
+                    );
+
                     has_scene = true;
-                    let last_target = renderer
-                        .camera_snapshot()
-                        .map(|camera| camera.target)
-                        .unwrap_or([position.x, position.y, position.z]);
+                    let (updates_tx, updates_rx) = mpsc::channel();
                     streaming = Some(ActiveWorldStream {
-                        runtime,
+                        runtime: Arc::new(Mutex::new(runtime)),
                         report: update.report,
-                        last_target,
+                        last_stream_position: [position.x, position.y, position.z],
+                        last_stream_sync: Instant::now(),
+                        updates_tx,
+                        updates_rx,
+                        update_in_flight: Arc::new(AtomicBool::new(false)),
+                        wake_sender: command_sender.clone(),
                     });
+                    schedule_world_stream_to_camera(&renderer, &mut streaming)?;
                     Ok(report(&renderer, streaming.as_ref()))
                 })();
+                if let Err(error) = &result {
+                    if window_alive.load(Ordering::Acquire) {
+                        diagnostics::record_fatal(
+                            "world_stream",
+                            "initial_load_failed",
+                            serde_json::json!({
+                                "error": error,
+                                "totalMs": total_started.elapsed().as_secs_f64() * 1000.0,
+                            }),
+                        );
+                    } else {
+                        diagnostics::record_event(
+                            "world_stream",
+                            "initial_load_aborted",
+                            serde_json::json!({
+                                "error": error,
+                                "totalMs": total_started.elapsed().as_secs_f64() * 1000.0,
+                            }),
+                        );
+                    }
+                }
                 let _ = reply.send(result);
             }
             RenderCommand::WorldStreamAt {
@@ -1274,25 +1751,34 @@ fn render_thread(
                     let active = streaming
                         .as_mut()
                         .ok_or_else(|| "World streaming is not active".to_string())?;
-                    let update = active
-                        .runtime
-                        .update(WorldStreamView::at(position))
-                        .map_err(core_error)?;
-                    if let Some(package) = update.package {
-                        if fit_camera || !has_scene {
-                            renderer.set_package(package)
-                        } else {
-                            renderer.update_streaming_package(package)
+                    let update = {
+                        let mut runtime = active
+                            .runtime
+                            .lock()
+                            .map_err(|_| "World streaming runtime lock is poisoned".to_string())?;
+                        runtime
+                            .update(WorldStreamView::at(position))
+                            .map_err(core_error)?
+                    };
+                    if let Some(packages) = update.packages {
+                        let has_packages = !packages.is_empty();
+                        renderer
+                            .update_streaming_packages(packages)
+                            .map_err(|error| error.to_string())?;
+                        if has_packages {
+                            if fit_camera {
+                                renderer.focus_world_position(
+                                    [position.x, position.y, position.z],
+                                    WORLD_CAMERA_FOCUS_RADIUS,
+                                );
+                            }
+                            renderer.render_frame().map_err(|error| error.to_string())?;
                         }
-                        .and_then(|_| renderer.render_frame())
-                        .map_err(|error| error.to_string())?;
-                        has_scene = true;
+                        has_scene = has_packages;
                     }
                     active.report = update.report;
-                    active.last_target = renderer
-                        .camera_snapshot()
-                        .map(|camera| camera.target)
-                        .unwrap_or([position.x, position.y, position.z]);
+                    active.last_stream_position = [position.x, position.y, position.z];
+                    active.last_stream_sync = Instant::now();
                     Ok(report(&renderer, streaming.as_ref()))
                 })();
                 let _ = reply.send(result);
@@ -1306,8 +1792,11 @@ fn render_thread(
                     .as_ref()
                     .ok_or_else(|| "World streaming is not active".to_string())
                     .and_then(|active| {
-                        active
+                        let runtime = active
                             .runtime
+                            .lock()
+                            .map_err(|_| "World streaming runtime lock is poisoned".to_string())?;
+                        runtime
                             .index()
                             .search_browser(&query, limit)
                             .map_err(core_error)
@@ -1320,23 +1809,24 @@ fn render_thread(
                         let active = streaming
                             .as_mut()
                             .ok_or_else(|| "World streaming is not active".to_string())?;
-                        active
-                            .runtime
-                            .set_overlay_packages(packages)
-                            .map_err(core_error)?;
-                        let update = active
-                            .runtime
-                            .update(WorldStreamView::at(active.report.position))
-                            .map_err(core_error)?;
-                        if let Some(package) = update.package {
-                            if has_scene {
-                                renderer.update_streaming_package(package)
-                            } else {
-                                renderer.set_package(package)
+                        let update = {
+                            let mut runtime = active.runtime.lock().map_err(|_| {
+                                "World streaming runtime lock is poisoned".to_string()
+                            })?;
+                            runtime.set_overlay_packages(packages).map_err(core_error)?;
+                            runtime
+                                .update(WorldStreamView::at(active.report.position))
+                                .map_err(core_error)?
+                        };
+                        if let Some(packages) = update.packages {
+                            let has_packages = !packages.is_empty();
+                            renderer
+                                .update_streaming_packages(packages)
+                                .map_err(|error| error.to_string())?;
+                            if has_packages {
+                                renderer.render_frame().map_err(|error| error.to_string())?;
                             }
-                            .and_then(|_| renderer.render_frame())
-                            .map_err(|error| error.to_string())?;
-                            has_scene = true;
+                            has_scene = has_packages;
                         }
                         active.report = update.report;
                     }
@@ -1350,23 +1840,26 @@ fn render_thread(
                         let active = streaming
                             .as_mut()
                             .ok_or_else(|| "World streaming is not active".to_string())?;
-                        active
-                            .runtime
-                            .set_overlay_packages(Vec::new())
-                            .map_err(core_error)?;
-                        let update = active
-                            .runtime
-                            .update(WorldStreamView::at(active.report.position))
-                            .map_err(core_error)?;
-                        if let Some(package) = update.package {
-                            if has_scene {
-                                renderer.update_streaming_package(package)
-                            } else {
-                                renderer.set_package(package)
+                        let update = {
+                            let mut runtime = active.runtime.lock().map_err(|_| {
+                                "World streaming runtime lock is poisoned".to_string()
+                            })?;
+                            runtime
+                                .set_overlay_packages(Vec::new())
+                                .map_err(core_error)?;
+                            runtime
+                                .update(WorldStreamView::at(active.report.position))
+                                .map_err(core_error)?
+                        };
+                        if let Some(packages) = update.packages {
+                            let has_packages = !packages.is_empty();
+                            renderer
+                                .update_streaming_packages(packages)
+                                .map_err(|error| error.to_string())?;
+                            if has_packages {
+                                renderer.render_frame().map_err(|error| error.to_string())?;
                             }
-                            .and_then(|_| renderer.render_frame())
-                            .map_err(|error| error.to_string())?;
-                            has_scene = true;
+                            has_scene = has_packages;
                         }
                         active.report = update.report;
                     }
@@ -1377,6 +1870,17 @@ fn render_thread(
             RenderCommand::StopWorldStream { reply } => {
                 streaming = None;
                 let _ = reply.send(Ok(report(&renderer, None)));
+            }
+            RenderCommand::ApplyWorldStreamUpdates => {
+                if let Err(error) =
+                    apply_background_world_updates(&mut renderer, &mut has_scene, &mut streaming)
+                {
+                    diagnostics::record_event(
+                        "world_stream",
+                        "background_apply_failed",
+                        serde_json::json!({ "error": error }),
+                    );
+                }
             }
             RenderCommand::Resize {
                 width,
@@ -1398,7 +1902,7 @@ fn render_thread(
                 reply,
             } => {
                 renderer.orbit(delta_x, delta_y);
-                send_after_render(&mut renderer, has_scene, streaming.as_ref(), reply);
+                send_after_input(&mut renderer, &mut has_scene, &mut streaming, reply);
             }
             RenderCommand::Look {
                 delta_x,
@@ -1406,7 +1910,7 @@ fn render_thread(
                 reply,
             } => {
                 renderer.look(delta_x, delta_y);
-                send_after_render(&mut renderer, has_scene, streaming.as_ref(), reply);
+                send_after_input(&mut renderer, &mut has_scene, &mut streaming, reply);
             }
             RenderCommand::Pan {
                 delta_x,
@@ -1414,11 +1918,11 @@ fn render_thread(
                 reply,
             } => {
                 renderer.pan(delta_x, delta_y);
-                send_after_render(&mut renderer, has_scene, streaming.as_ref(), reply);
+                send_after_input(&mut renderer, &mut has_scene, &mut streaming, reply);
             }
             RenderCommand::Zoom { delta, reply } => {
                 renderer.zoom(delta);
-                send_after_render(&mut renderer, has_scene, streaming.as_ref(), reply);
+                send_after_input(&mut renderer, &mut has_scene, &mut streaming, reply);
             }
             RenderCommand::Fly {
                 forward,
@@ -1427,7 +1931,28 @@ fn render_thread(
                 reply,
             } => {
                 renderer.fly(forward, right, up);
-                send_after_render(&mut renderer, has_scene, streaming.as_ref(), reply);
+                send_after_input(&mut renderer, &mut has_scene, &mut streaming, reply);
+            }
+            RenderCommand::InputFrame {
+                look_x,
+                look_y,
+                pan_x,
+                pan_y,
+                forward,
+                right,
+                up,
+                reply,
+            } => {
+                if look_x != 0.0 || look_y != 0.0 {
+                    renderer.look(look_x, look_y);
+                }
+                if pan_x != 0.0 || pan_y != 0.0 {
+                    renderer.pan(pan_x, pan_y);
+                }
+                if forward != 0.0 || right != 0.0 || up != 0.0 {
+                    renderer.fly(forward, right, up);
+                }
+                send_after_input(&mut renderer, &mut has_scene, &mut streaming, reply);
             }
             RenderCommand::Pick { x, y, reply } => {
                 let pick = renderer.pick(x, y);
@@ -1521,6 +2046,193 @@ fn render_thread(
     }
 }
 
+fn send_after_input(
+    renderer: &mut SurfaceRenderer,
+    has_scene: &mut bool,
+    streaming: &mut Option<ActiveWorldStream>,
+    reply: Sender<Result<NativeViewportReport, String>>,
+) {
+    let result = (|| -> Result<NativeViewportReport, String> {
+        schedule_world_stream_to_camera(renderer, streaming)?;
+        render_if_loaded(renderer, *has_scene).map_err(|error| error.to_string())?;
+        Ok(report(renderer, streaming.as_ref()))
+    })();
+    let _ = reply.send(result);
+}
+
+fn schedule_world_stream_to_camera(
+    renderer: &SurfaceRenderer,
+    streaming: &mut Option<ActiveWorldStream>,
+) -> Result<(), String> {
+    let Some(active) = streaming.as_mut() else {
+        return Ok(());
+    };
+    if active.update_in_flight.load(Ordering::Acquire) {
+        return Ok(());
+    }
+
+    let Some(camera) = renderer.camera_snapshot() else {
+        return Ok(());
+    };
+    let position = camera.target;
+    let dx = position[0] - active.last_stream_position[0];
+    let dy = position[1] - active.last_stream_position[1];
+    let horizontal_distance_squared = dx * dx + dy * dy;
+    let fill_pending = active.report.pending_chunks > 0
+        || active.report.pending_pages > 0
+        || active.report.prefetch_pending > 0;
+
+    if !fill_pending {
+        if active.last_stream_sync.elapsed() < Duration::from_millis(250) {
+            return Ok(());
+        }
+        if horizontal_distance_squared < 96.0_f32 * 96.0_f32 {
+            return Ok(());
+        }
+    }
+
+    if active
+        .update_in_flight
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Ok(());
+    }
+
+    let point = GtaRpfWorldPoint {
+        x: position[0],
+        y: position[1],
+        z: position[2],
+    };
+    let runtime = Arc::clone(&active.runtime);
+    let updates_tx = active.updates_tx.clone();
+    let wake_sender = active.wake_sender.clone();
+    active.last_stream_position = position;
+    active.last_stream_sync = Instant::now();
+
+    diagnostics::record_event(
+        "world_stream",
+        "background_update_scheduled",
+        serde_json::json!({
+            "position": position,
+            "pendingChunks": active.report.pending_chunks,
+            "pendingPages": active.report.pending_pages,
+            "prefetchPending": active.report.prefetch_pending,
+        }),
+    );
+
+    let spawn_result = thread::Builder::new()
+        .name("ragelab-world-stream".into())
+        .spawn(move || {
+            let started = Instant::now();
+            let result = runtime
+                .lock()
+                .map_err(|_| "World streaming runtime lock is poisoned".to_string())
+                .and_then(|mut runtime| {
+                    runtime
+                        .update(WorldStreamView::at(point))
+                        .map_err(core_error)
+                });
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let _ = updates_tx.send(BackgroundWorldUpdate {
+                position,
+                elapsed_ms,
+                result,
+            });
+            let _ = wake_sender.send(RenderCommand::ApplyWorldStreamUpdates);
+        });
+
+    if let Err(error) = spawn_result {
+        active.update_in_flight.store(false, Ordering::Release);
+        return Err(error.to_string());
+    }
+
+    Ok(())
+}
+
+fn apply_background_world_updates(
+    renderer: &mut SurfaceRenderer,
+    has_scene: &mut bool,
+    streaming: &mut Option<ActiveWorldStream>,
+) -> Result<(), String> {
+    let mut package_changed = false;
+    let mut update_completed = false;
+    if let Some(active) = streaming.as_mut() {
+        while let Ok(background) = active.updates_rx.try_recv() {
+            update_completed = true;
+            match background.result {
+                Ok(update) => {
+                    let active_maps = update.report.active_maps;
+                    let pending_chunks = update.report.pending_chunks;
+                    let prefetch_pending = update.report.prefetch_pending;
+                    let loaded_chunks = update.report.loaded_chunks;
+                    let prefetched_chunks = update.report.prefetched_chunks;
+                    let chunk_loads = update.report.chunk_loads.clone();
+                    if let Some(packages) = update.packages {
+                        let has_packages = !packages.is_empty();
+                        renderer
+                            .update_streaming_packages(packages)
+                            .map_err(|error| error.to_string())?;
+                        *has_scene = has_packages;
+                        package_changed = has_packages;
+                    }
+                    active.report = update.report;
+                    diagnostics::record_event(
+                        "world_stream",
+                        "background_update_applied",
+                        serde_json::json!({
+                            "position": background.position,
+                            "elapsedMs": background.elapsed_ms,
+                            "activeMaps": active_maps,
+                            "loadedChunks": loaded_chunks,
+                            "prefetchedChunks": prefetched_chunks,
+                            "chunkLoads": chunk_loads,
+                            "pendingChunks": pending_chunks,
+                            "pendingPages": active.report.pending_pages,
+                            "compiledPages": active.report.compiled_pages,
+                            "failedPages": active.report.failed_pages,
+                            "spatialOmittedNodes": active.report.spatial_omitted_nodes,
+                            "prefetchPending": prefetch_pending,
+                        }),
+                    );
+                }
+                Err(error) => {
+                    diagnostics::record_event(
+                        "world_stream",
+                        "background_update_failed",
+                        serde_json::json!({
+                            "position": background.position,
+                            "elapsedMs": background.elapsed_ms,
+                            "error": error,
+                        }),
+                    );
+                }
+            }
+        }
+        if update_completed {
+            active.update_in_flight.store(false, Ordering::Release);
+        }
+    }
+
+    if package_changed {
+        renderer.render_frame().map_err(|error| error.to_string())?;
+        let stats = renderer.stats();
+        diagnostics::record_event(
+            "world_stream",
+            "background_frame_rendered",
+            serde_json::json!({
+                "instances": stats.instances,
+                "visibleInstances": stats.visible_instances,
+                "frameMs": stats.last_frame_ms,
+                "gpuAssetBytes": stats.gpu_asset_cache_bytes,
+                "gpuTextureBytes": stats.gpu_texture_cache_bytes,
+            }),
+        );
+    }
+
+    schedule_world_stream_to_camera(renderer, streaming)
+}
+
 fn send_after_render(
     renderer: &mut SurfaceRenderer,
     has_scene: bool,
@@ -1599,8 +2311,7 @@ async fn run_debug_open(app: &tauri::AppHandle, spec_path: &str) -> Result<(), S
     )
     .await?;
 
-    let report =
-        native_viewport_load_scene(app.state::<NativeViewportState>(), spec.scene.clone())?;
+    let report = load_native_viewport_scene_blocking(app, spec.scene.clone())?;
     eprintln!(
         "native viewport open: {} instances, {} assets, {} meshes, {} textures, {:.2} ms load",
         report.stats.instances,
@@ -1608,6 +2319,96 @@ async fn run_debug_open(app: &tauri::AppHandle, spec_path: &str) -> Result<(), S
         report.stats.meshes,
         report.stats.textures,
         report.stats.scene_load_ms
+    );
+    Ok(())
+}
+
+#[cfg(debug_assertions)]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeWorldOpenSpec {
+    game_index: SceneGameIndexRequest,
+    position: [f32; 3],
+    #[serde(default = "smoke_width")]
+    width: u32,
+    #[serde(default = "smoke_height")]
+    height: u32,
+    load_radius: Option<f32>,
+    retain_radius: Option<f32>,
+    max_active_maps: Option<usize>,
+    max_cpu_chunks: Option<usize>,
+    max_cpu_bytes: Option<u64>,
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn maybe_start_debug_world_open(app: tauri::AppHandle) {
+    let Some(spec_path) = debug_cli_arg_path("--native-world-open") else {
+        return;
+    };
+
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = run_debug_world_open(&app, &spec_path).await {
+            eprintln!("native world open failed: {error}");
+            app.exit(1);
+        }
+    });
+}
+
+#[cfg(debug_assertions)]
+async fn run_debug_world_open(app: &tauri::AppHandle, spec_path: &str) -> Result<(), String> {
+    let bytes = std::fs::read(spec_path).map_err(core_error)?;
+    let spec: NativeWorldOpenSpec = serde_json::from_slice(&bytes).map_err(core_error)?;
+
+    if let Some(main) = app.get_window("main") {
+        main.hide().map_err(core_error)?;
+    }
+
+    create_native_viewport(
+        app.clone(),
+        app.state::<NativeViewportState>(),
+        NativeViewportCreateRequest {
+            width: spec.width,
+            height: spec.height,
+        },
+        NativeViewportWindowMode::DedicatedLoading,
+    )
+    .await?;
+
+    let report = start_native_world_stream_blocking(
+        app,
+        NativeWorldStreamStartRequest {
+            game_index: spec.game_index,
+            position: spec.position,
+            load_radius: spec.load_radius.or(Some(250.0)),
+            retain_radius: spec.retain_radius.or(Some(350.0)),
+            max_active_maps: spec.max_active_maps.or(Some(4)),
+            max_chunk_loads_per_update: Some(2),
+            max_cpu_chunks: spec.max_cpu_chunks.or(Some(24)),
+            max_cpu_bytes: spec.max_cpu_bytes,
+            max_gpu_assets: None,
+            max_gpu_textures: None,
+            max_gpu_asset_bytes: None,
+            max_gpu_texture_bytes: None,
+        },
+    )?;
+
+    native_viewport_focus_window(app.state::<NativeViewportState>())?;
+    diagnostics::record_event(
+        "map",
+        "debug_world_opened",
+        serde_json::json!({
+            "activeMaps": report.streaming.as_ref().map(|stream| stream.active_maps),
+            "instances": report.stats.instances,
+        }),
+    );
+    eprintln!(
+        "native world open: {} instances, {} active maps",
+        report.stats.instances,
+        report
+            .streaming
+            .as_ref()
+            .map(|stream| stream.active_maps)
+            .unwrap_or(0)
     );
     Ok(())
 }
@@ -1734,8 +2535,7 @@ async fn run_viewport_smoke(
         )?;
 
         let load_started = Instant::now();
-        let loaded =
-            native_viewport_load_scene(app.state::<NativeViewportState>(), spec.scene.clone())?;
+        let loaded = load_native_viewport_scene_blocking(app, spec.scene.clone())?;
         output.load_wall_ms = load_started.elapsed().as_secs_f64() * 1000.0;
         output.loaded = Some(loaded);
 
@@ -1960,21 +2760,22 @@ async fn run_debug_world_stream_smoke(
                 width: spec.width,
                 height: spec.height,
             },
-            NativeViewportWindowMode::Overlay,
+            NativeViewportWindowMode::DedicatedLoading,
         )
         .await?;
 
         let first = &spec.points[0];
         let max_active_maps = spec.max_active_maps.unwrap_or(4);
         let started_at = Instant::now();
-        let first_report = native_viewport_start_world_stream(
-            app.state::<NativeViewportState>(),
+        let first_report = start_native_world_stream_blocking(
+            app,
             NativeWorldStreamStartRequest {
                 game_index: spec.game_index.clone(),
                 position: first.position,
                 load_radius: spec.load_radius.or(Some(300.0)),
                 retain_radius: spec.retain_radius.or(Some(450.0)),
                 max_active_maps: Some(max_active_maps),
+                max_chunk_loads_per_update: Some(2),
                 max_cpu_chunks: spec.max_cpu_chunks.or(Some(16)),
                 max_cpu_bytes: spec.max_cpu_bytes.or(Some(768 * 1024 * 1024)),
                 max_gpu_assets: None,
@@ -1984,6 +2785,7 @@ async fn run_debug_world_stream_smoke(
             },
         )?;
         let first_wall_ms = started_at.elapsed().as_secs_f64() * 1000.0;
+        native_viewport_focus_window(app.state::<NativeViewportState>())?;
         validate_world_stream_smoke_report(&first_report, max_active_maps)?;
         record_world_stream_smoke_step(
             &mut output,
@@ -1995,8 +2797,8 @@ async fn run_debug_world_stream_smoke(
 
         for point in spec.points.iter().skip(1) {
             let started_at = Instant::now();
-            let report = native_viewport_world_stream_at(
-                app.state::<NativeViewportState>(),
+            let report = stream_native_world_at_blocking(
+                app,
                 NativeWorldStreamAtRequest {
                     position: point.position,
                     fit_camera: true,
@@ -2030,17 +2832,16 @@ async fn run_debug_world_stream_smoke(
             validate_native_world_browser_smoke(app, &spec, &mut output)?;
         }
 
-        shutdown_native_viewport(&app.state::<NativeViewportState>())?;
+        // The controller exits the app after this function returns.
+        // Closing the last viewport here could terminate the app before the
+        // smoke report below is persisted to disk.
         Ok(())
     }
     .await;
 
     match smoke_result {
         Ok(()) => output.ok = true,
-        Err(error) => {
-            output.error = Some(error);
-            let _ = shutdown_native_viewport(&app.state::<NativeViewportState>());
-        }
+        Err(error) => output.error = Some(error),
     }
 
     let write_result = serde_json::to_vec_pretty(&output)

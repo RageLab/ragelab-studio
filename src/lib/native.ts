@@ -8,6 +8,14 @@ export interface StudioInfo {
   coreRevision: string;
 }
 
+export interface DiagnosticsSummary {
+  directory: string;
+  sessionId: string;
+  sessionLog: string;
+  latestIncident: string | null;
+  previousAbnormalExitDetected: boolean;
+}
+
 export type GtaVEdition = "legacy" | "enhanced" | "ambiguous" | "unknown";
 
 export type GtaVDiscoverySource =
@@ -630,6 +638,7 @@ export interface NativeViewportStats {
   uploadedPayloadBytes: number;
   sceneLoadMs: number;
   lastFrameMs: number;
+  visibleInstances: number;
   selectedNodeIndex: number | null;
 }
 
@@ -732,6 +741,21 @@ export interface NativeWorldStreamSummary {
   blobBytes: number;
 }
 
+export interface NativeWorldChunkLoadMetric {
+  chunk: {
+    mapHash: number;
+    provider: GtaRpfIndexLocator;
+  };
+  prefetched: boolean;
+  elapsedMs: number;
+  readMs: number;
+  parseMs: number;
+  assembleMs: number;
+  renderPackageMs: number;
+  encodedBytes: number;
+  instances: number;
+}
+
 export interface NativeWorldStreamReport {
   schema: "ragelab.world-stream";
   schemaVersion: number;
@@ -744,6 +768,10 @@ export interface NativeWorldStreamReport {
   visibleMaps: number;
   activeMaps: number;
   activeEntities: number;
+  spatialOmittedNodes: number;
+  spatialOmittedAssets: number;
+  renderOmittedAssets: number;
+  renderOmittedGeometry: number;
   activeChunks: NativeWorldActiveMap[];
   overlayPackages: number;
   overlaySuppressedMaps: number;
@@ -752,8 +780,17 @@ export interface NativeWorldStreamReport {
   deferredParentMaps: number;
   lodDeferredEntities: number;
   loadedChunks: number;
+  prefetchedChunks: number;
+  chunkLoads: NativeWorldChunkLoadMetric[];
+  pendingChunks: number;
+  pendingPages: number;
+  failedPages: number;
+  compiledPages: number;
+  prefetchPending: number;
   unloadedChunks: number;
   cacheHits: number;
+  cachedTileSwaps: number;
+  cachedRetiredTiles: number;
   cacheMisses: number;
   cumulativeCacheHits: number;
   cumulativeCacheMisses: number;
@@ -784,6 +821,7 @@ export interface NativeWorldStreamStartRequest {
   loadRadius?: number;
   retainRadius?: number;
   maxActiveMaps?: number;
+  maxChunkLoadsPerUpdate?: number;
   maxCpuChunks?: number;
   maxCpuBytes?: number;
   maxGpuAssets?: number;
@@ -979,6 +1017,22 @@ export function getStudioInfo(): Promise<StudioInfo> {
   return invoke<StudioInfo>("studio_info");
 }
 
+export function getDiagnosticsSummary(): Promise<DiagnosticsSummary> {
+  return invoke<DiagnosticsSummary>("diagnostics_summary");
+}
+
+export function recordFrontendDiagnostic(
+  message: string,
+  stack?: string,
+  context?: string,
+): Promise<void> {
+  return invoke<void>("diagnostics_record_frontend_error", {
+    message,
+    stack: stack ?? null,
+    context: context ?? null,
+  });
+}
+
 export function discoverGtaLegacy(): Promise<GtaVDiscoveryReport> {
   return invoke<GtaVDiscoveryReport>("core_discover_gta_legacy");
 }
@@ -1093,6 +1147,31 @@ export function createNativeViewport(
 ): Promise<NativeViewportReport> {
   return invoke<NativeViewportReport>("native_viewport_create", {
     request: { width, height },
+  });
+}
+
+export function createDedicatedNativeViewport(
+  width = 1280,
+  height = 800,
+): Promise<NativeViewportReport> {
+  return invoke<NativeViewportReport>("native_viewport_create_dedicated", {
+    request: { width, height },
+  });
+}
+
+export function openDedicatedNativeScene(
+  request: NativeViewportSceneRequest,
+): Promise<NativeViewportReport> {
+  return invoke<NativeViewportReport>("native_viewport_open_dedicated_scene", {
+    request: normalizeAuthoringSceneRequest(request),
+  });
+}
+
+export function openDedicatedNativeWorld(
+  request: NativeWorldStreamStartRequest,
+): Promise<NativeViewportReport> {
+  return invoke<NativeViewportReport>("native_viewport_open_dedicated_world", {
+    request,
   });
 }
 
@@ -1321,6 +1400,10 @@ export function setNativeViewportVisible(visible: boolean): Promise<void> {
   return invoke<void>("native_viewport_set_visible", {
     request: { visible },
   });
+}
+
+export function focusNativeViewportWindow(): Promise<void> {
+  return invoke<void>("native_viewport_focus_window");
 }
 
 export function getNativeViewportStats(): Promise<NativeViewportReport> {
