@@ -1095,10 +1095,10 @@ fn start_native_world_stream_blocking(
             .unwrap_or(defaults.max_asset_bytes),
         max_texture_bytes: request
             .max_gpu_texture_bytes
-            // Full mip chains require ~33% more VRAM than the previous
-            // level-0-only cache. Keep an explicit GTA-only budget and
-            // preserve per-request overrides.
-            .unwrap_or(defaults.max_texture_bytes.saturating_mul(3) / 2),
+            // Camera-adaptive world textures keep 512px only near the
+            // camera. Reserve 512 MiB for their mip chains instead of the
+            // previous 384 MiB; explicit per-request limits still win.
+            .unwrap_or(defaults.max_texture_bytes.saturating_mul(2)),
     };
     gpu_budget.validate().map_err(|error| error.to_string())?;
     let position = world_point(request.position)?;
