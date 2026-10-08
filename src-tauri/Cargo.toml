@@ -36,3 +36,14 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+# Optimized native GTA Map profiling builds. Keep debug assertions enabled
+# solely so the explicit --native-world-open test launcher remains available.
+# Separate target/profile avoids locking or replacing a running debug window.
+[profile.map-perf]
+inherits = "release"
+opt-level = 2
+codegen-units = 16
+lto = false
+incremental = true
+debug-assertions = true

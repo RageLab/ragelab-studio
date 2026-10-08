@@ -2187,6 +2187,7 @@ fn apply_background_world_updates(
     streaming: &mut Option<ActiveWorldStream>,
 ) -> Result<(), String> {
     let mut package_changed = false;
+    let mut gpu_apply_ms = None;
     let mut update_completed = false;
     if let Some(active) = streaming.as_mut() {
         while let Ok(background) = active.updates_rx.try_recv() {
@@ -2200,10 +2201,12 @@ fn apply_background_world_updates(
                     let prefetched_chunks = update.report.prefetched_chunks;
                     let chunk_loads = update.report.chunk_loads.clone();
                     if let Some(packages) = update.packages {
+                        let gpu_started = Instant::now();
                         let has_packages = !packages.is_empty();
                         renderer
                             .update_streaming_packages(packages)
                             .map_err(|error| error.to_string())?;
+                        gpu_apply_ms = Some(gpu_started.elapsed().as_secs_f64() * 1000.0);
                         *has_scene = has_packages;
                         package_changed = has_packages;
                     }
@@ -2214,6 +2217,8 @@ fn apply_background_world_updates(
                         serde_json::json!({
                             "position": background.position,
                             "elapsedMs": background.elapsed_ms,
+                            "gpuApplyMs": gpu_apply_ms,
+                            "gpuBudgetOverflow": renderer.stats().gpu_budget_overflow,
                             "activeMaps": active_maps,
                             "loadedChunks": loaded_chunks,
                             "prefetchedChunks": prefetched_chunks,
@@ -2260,6 +2265,9 @@ fn apply_background_world_updates(
                 "frameMs": stats.last_frame_ms,
                 "gpuAssetBytes": stats.gpu_asset_cache_bytes,
                 "gpuTextureBytes": stats.gpu_texture_cache_bytes,
+                "gpuBudgetOverflow": stats.gpu_budget_overflow,
+                "gpuApplyMs": gpu_apply_ms,
+                "sceneLoadMs": stats.scene_load_ms,
             }),
         );
     }
