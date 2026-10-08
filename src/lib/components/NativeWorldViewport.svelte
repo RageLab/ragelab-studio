@@ -75,10 +75,10 @@
       report = await startNativeWorldStream({
         gameIndex,
         position: initialPosition,
-        loadRadius: 450,
-        retainRadius: 650,
-        maxActiveMaps: 12,
-        maxCpuChunks: 40,
+        loadRadius: 1150,
+        retainRadius: 1500,
+        maxActiveMaps: 20,
+        maxCpuChunks: 48,
       });
       applyReport(report);
     } catch (error) {
