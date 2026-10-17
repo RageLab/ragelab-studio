@@ -355,6 +355,9 @@ enum RenderCommand {
     CycleLodDebug {
         reply: Sender<Result<NativeViewportReport, String>>,
     },
+    CaptureLodDiagnostic {
+        reply: Sender<Result<NativeViewportReport, String>>,
+    },
     Shutdown,
 }
 
@@ -779,8 +782,8 @@ fn spawn_standalone_input_thread(
         Graphics::Gdi::ScreenToClient,
         UI::{
             Input::KeyboardAndMouse::{
-                GetAsyncKeyState, VK_ADD, VK_ESCAPE, VK_F7, VK_LBUTTON, VK_MBUTTON, VK_OEM_MINUS,
-                VK_OEM_PLUS, VK_RBUTTON, VK_SHIFT, VK_SUBTRACT,
+                GetAsyncKeyState, VK_ADD, VK_ESCAPE, VK_F7, VK_F8, VK_LBUTTON, VK_MBUTTON,
+                VK_OEM_MINUS, VK_OEM_PLUS, VK_RBUTTON, VK_SHIFT, VK_SUBTRACT,
             },
             WindowsAndMessaging::{GetCursorPos, GetForegroundWindow},
         },
@@ -799,6 +802,7 @@ fn spawn_standalone_input_thread(
             let mut minus_was_down = false;
             let mut escape_was_down = false;
             let mut lod_debug_was_down = false;
+            let mut lod_probe_was_down = false;
             let mut lod_debug_step = 0_usize;
             let mut last_motion_sample = Instant::now();
 
@@ -948,6 +952,16 @@ fn spawn_standalone_input_thread(
                     send_detached(&sender, |reply| RenderCommand::CycleLodDebug { reply });
                 }
                 lod_debug_was_down = lod_debug_down;
+
+                // F8 records all three logical layers in one renderer epoch.
+                // It does not cycle F7, move the camera or change residency.
+                let lod_probe_down = key_down(VK_F8 as i32);
+                if lod_probe_down && !lod_probe_was_down {
+                    send_detached(&sender, |reply| RenderCommand::CaptureLodDiagnostic {
+                        reply,
+                    });
+                }
+                lod_probe_was_down = lod_probe_down;
 
                 let escape_down = key_down(VK_ESCAPE as i32);
                 if escape_down && !escape_was_down {
@@ -2068,6 +2082,45 @@ fn render_thread(
                     serde_json::json!({ "mode": mode }),
                 );
                 send_after_render(&mut renderer, has_scene, streaming.as_ref(), reply);
+            }
+            RenderCommand::CaptureLodDiagnostic { reply } => {
+                let stable = streaming.as_ref().is_some_and(|active| {
+                    active.report.pending_chunks == 0
+                        && active.report.pending_pages == 0
+                        && !active.update_in_flight.load(Ordering::Acquire)
+                });
+                if stable && has_scene {
+                    if let Some(snapshot) = renderer.lod_diagnostic_snapshot(512) {
+                        let active = streaming.as_ref().expect("stable requires world stream");
+                        diagnostics::record_event(
+                            "lod",
+                            "fixed_camera_snapshot",
+                            serde_json::json!({
+                                "schemaVersion": 1,
+                                "activeMaps": active.report.active_maps,
+                                "pendingChunks": active.report.pending_chunks,
+                                "pendingPages": active.report.pending_pages,
+                                "maxNodes": 512,
+                                "sameCameraAndPackages": true,
+                                "snapshot": snapshot,
+                            }),
+                        );
+                    }
+                } else {
+                    diagnostics::record_event(
+                        "lod",
+                        "snapshot_skipped_not_settled",
+                        serde_json::json!({
+                            "hasScene": has_scene,
+                            "activeMaps": streaming.as_ref().map(|a| a.report.active_maps),
+                            "pendingChunks": streaming.as_ref().map(|a| a.report.pending_chunks),
+                            "pendingPages": streaming.as_ref().map(|a| a.report.pending_pages),
+                            "updateInFlight": streaming.as_ref().map(|a|
+                                a.update_in_flight.load(Ordering::Acquire)),
+                        }),
+                    );
+                }
+                let _ = reply.send(Ok(report(&renderer, streaming.as_ref())));
             }
             RenderCommand::Stats { reply } => {
                 let _ = reply.send(Ok(report(&renderer, streaming.as_ref())));
