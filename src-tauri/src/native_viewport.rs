@@ -1615,7 +1615,58 @@ fn render_thread(
     let mut has_scene = false;
     let mut streaming: Option<ActiveWorldStream> = None;
 
-    while let Ok(command) = receiver.recv() {
+    loop {
+        // The render thread must keep presenting and advancing GPU uploads
+        // even while there are no user events or fresh world-stream updates.
+        let command = if renderer.has_pending_streaming_update() {
+            match receiver.recv_timeout(Duration::from_millis(16)) {
+                Ok(command) => command,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if !window_alive.load(Ordering::Acquire) {
+                        break;
+                    }
+                    let pending_before = renderer.pending_streaming_uploads();
+                    if let Err(error) = render_if_loaded(&mut renderer, has_scene) {
+                        diagnostics::record_event(
+                            "world_stream",
+                            "incremental_gpu_upload_failed",
+                            serde_json::json!({ "error": error.to_string() }),
+                        );
+                    } else {
+                        let remaining = renderer.pending_streaming_uploads();
+                        if pending_before > 0
+                            && (remaining == 0 || pending_before / 64 != remaining / 64)
+                        {
+                            let stats = renderer.stats();
+                            let (uploaded, elapsed_ms) = renderer.last_streaming_upload_batch();
+                            diagnostics::record_event(
+                                "world_stream",
+                                "incremental_gpu_upload_progress",
+                                serde_json::json!({
+                                    "pendingBefore": pending_before,
+                                    "pendingGpuUploads": remaining,
+                                    "uploaded": uploaded,
+                                    "gpuUploadBatchMs": elapsed_ms,
+                                    "gpuCommitMs": renderer.last_streaming_commit_ms(),
+                                    "frameMs": stats.last_frame_ms,
+                                    "gpuTextureBytes": stats.gpu_texture_cache_bytes,
+                                    "gpuAssetBytes": stats.gpu_asset_cache_bytes,
+                                    "gpuBudgetOverflow": stats.gpu_budget_overflow,
+                                    "committed": !renderer.has_pending_streaming_update(),
+                                }),
+                            );
+                        }
+                    }
+                    continue;
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        } else {
+            match receiver.recv() {
+                Ok(command) => command,
+                Err(_) => break,
+            }
+        };
         if !window_alive.load(Ordering::Acquire) {
             diagnostics::record_event(
                 "renderer",
@@ -2257,7 +2308,7 @@ fn apply_background_world_updates(
                         let gpu_started = Instant::now();
                         let has_packages = !packages.is_empty();
                         renderer
-                            .update_streaming_packages(packages)
+                            .queue_streaming_packages(packages)
                             .map_err(|error| error.to_string())?;
                         gpu_apply_ms = Some(gpu_started.elapsed().as_secs_f64() * 1000.0);
                         *has_scene = has_packages;
@@ -2271,6 +2322,7 @@ fn apply_background_world_updates(
                             "position": background.position,
                             "elapsedMs": background.elapsed_ms,
                             "gpuApplyMs": gpu_apply_ms,
+                            "pendingGpuUploads": renderer.pending_streaming_uploads(),
                             "gpuBudgetOverflow": renderer.stats().gpu_budget_overflow,
                             "activeMaps": active_maps,
                             "loadedChunks": loaded_chunks,
@@ -2320,6 +2372,9 @@ fn apply_background_world_updates(
                 "gpuTextureBytes": stats.gpu_texture_cache_bytes,
                 "gpuBudgetOverflow": stats.gpu_budget_overflow,
                 "gpuApplyMs": gpu_apply_ms,
+                "pendingGpuUploads": renderer.pending_streaming_uploads(),
+                "gpuUploadBatch": renderer.last_streaming_upload_batch().0,
+                "gpuUploadBatchMs": renderer.last_streaming_upload_batch().1,
                 "sceneLoadMs": stats.scene_load_ms,
             }),
         );
