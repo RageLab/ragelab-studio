@@ -1,19 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import type { UnlistenFn } from "@tauri-apps/api/event";
-  import { getCurrentWindow } from "@tauri-apps/api/window";
 
   import {
-    createNativeViewport,
+    createDedicatedNativeViewport,
+    focusNativeViewportWindow,
     getNativeViewportStats,
     loadNativeViewportScene,
-    pickNativeViewport,
     selectNativeViewportNode,
-    sendNativeViewportInput,
     setNativeViewportOverlays,
     setNativeViewportProjection,
-    setNativeViewportRect,
-    setNativeViewportVisible,
     shutdownNativeViewport,
     type NativeViewportProjection,
     type NativeViewportReport,
@@ -32,9 +27,9 @@
   export let selectedNodeIndex: number | null = null;
   export let onNativeFailure: ((message: string) => void) | null = null;
 
-  let container: HTMLButtonElement;
   let mounted = false;
   let initialized = false;
+  let opening = false;
   let loading = false;
   let renderError = "";
   let report: NativeViewportReport | null = null;
@@ -45,72 +40,31 @@
   let collision = false;
   let lastSceneKey = "";
   let previousSelectedNodeIndex: number | null = null;
-  let resizeObserver: ResizeObserver | null = null;
-  let rectFrame = 0;
-  let inputFrame = 0;
-  let dragMode: "orbit" | "pan" | null = null;
-  let pointerId: number | null = null;
-  let pointerMoved = false;
-  let pendingDeltaX = 0;
-  let pendingDeltaY = 0;
-  let unlistenWindowEvents: UnlistenFn[] = [];
-
-  const currentWindow = getCurrentWindow();
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
 
   onMount(() => {
     mounted = true;
-    void initializeNativeViewport();
+    if (manifest) void openSceneWindow();
 
-    resizeObserver = new ResizeObserver(() => scheduleRectSync());
-    resizeObserver.observe(container);
-
-    const schedule = () => scheduleRectSync();
-    window.addEventListener("scroll", schedule, true);
-    window.addEventListener("resize", schedule);
-
-    void Promise.all([
-      currentWindow.onMoved(schedule),
-      currentWindow.onResized(schedule),
-      currentWindow.onScaleChanged(schedule),
-      currentWindow.onFocusChanged(({ payload }) => {
-        void setNativeViewportVisible(Boolean(payload) && initialized).catch(() => {});
-      }),
-    ]).then((listeners) => {
-      if (mounted) {
-        unlistenWindowEvents = listeners;
-      } else {
-        for (const unlisten of listeners) {
-          unlisten();
-        }
+    pollTimer = setInterval(() => {
+      if (mounted && initialized && !opening && !loading) {
+        void refresh().catch(() => {});
       }
-    });
+    }, 300);
 
     return () => {
       mounted = false;
-      window.removeEventListener("scroll", schedule, true);
-      window.removeEventListener("resize", schedule);
-      resizeObserver?.disconnect();
-      resizeObserver = null;
-      for (const unlisten of unlistenWindowEvents) {
-        unlisten();
-      }
-      unlistenWindowEvents = [];
-      if (rectFrame) {
-        cancelAnimationFrame(rectFrame);
-      }
-      if (inputFrame) {
-        cancelAnimationFrame(inputFrame);
-      }
-      void setNativeViewportVisible(false).catch(() => {});
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = null;
       void shutdownNativeViewport().catch(() => {});
     };
   });
 
-  $: if (mounted && initialized && manifest) {
+  $: if (mounted && manifest) {
     const nextKey = sceneKey();
-    if (nextKey !== lastSceneKey) {
+    if (nextKey !== lastSceneKey && !opening && !loading) {
       lastSceneKey = nextKey;
-      void loadScene();
+      void openSceneWindow();
     }
   }
 
@@ -121,56 +75,81 @@
   ) {
     previousSelectedNodeIndex = selectedNodeIndex;
     void selectNativeViewportNode(selectedNodeIndex)
-      .then((next) => {
-        report = next;
-      })
+      .then(applyReport)
       .catch(handleNativeError);
   }
 
-  async function initializeNativeViewport() {
+  async function openSceneWindow() {
+    if (!manifest || opening) return;
+    opening = true;
+    loading = true;
+    renderError = "";
+
     try {
-      renderError = "";
-      const width = Math.max(container.clientWidth, 1);
-      const height = Math.max(container.clientHeight, 1);
-      report = await createNativeViewport(width, height);
+      report = await createDedicatedNativeViewport(1280, 800);
       initialized = true;
-      await syncRect();
       await setNativeViewportOverlays(grid, wireframe, bounds, collision);
-      await setNativeViewportVisible(true);
-      if (manifest) {
-        lastSceneKey = sceneKey();
-        await loadScene();
+      applyReport(
+        await loadNativeViewportScene({
+          workspace,
+          ymap,
+          fallbackRoots,
+          rpfMounts,
+          gameIndex,
+          maxNodes,
+        }),
+      );
+      previousSelectedNodeIndex = selectedNodeIndex;
+      if (selectedNodeIndex !== null) {
+        applyReport(await selectNativeViewportNode(selectedNodeIndex));
       }
+    } catch (error) {
+      initialized = false;
+      handleNativeError(error);
+    } finally {
+      opening = false;
+      loading = false;
+    }
+  }
+
+  async function focusMap() {
+    if (!initialized) {
+      await openSceneWindow();
+      return;
+    }
+
+    try {
+      await focusNativeViewportWindow();
+    } catch {
+      initialized = false;
+      await openSceneWindow();
+    }
+  }
+
+  async function refresh() {
+    if (!initialized) return;
+    try {
+      applyReport(await getNativeViewportStats());
+    } catch {
+      initialized = false;
+      report = null;
+    }
+  }
+
+  async function toggleProjection() {
+    projection = projection === "perspective" ? "orthographic" : "perspective";
+    try {
+      applyReport(await setNativeViewportProjection(projection));
     } catch (error) {
       handleNativeError(error);
     }
   }
 
-  async function loadScene() {
-    if (!manifest || loading) {
-      return;
-    }
-
-    loading = true;
-    renderError = "";
+  async function updateOverlays() {
     try {
-      report = await loadNativeViewportScene({
-        workspace,
-        ymap,
-        fallbackRoots,
-        rpfMounts,
-        gameIndex,
-        maxNodes,
-      });
-      previousSelectedNodeIndex = selectedNodeIndex;
-      if (selectedNodeIndex !== null) {
-        report = await selectNativeViewportNode(selectedNodeIndex);
-      }
-      await setNativeViewportVisible(true);
+      applyReport(await setNativeViewportOverlays(grid, wireframe, bounds, collision));
     } catch (error) {
       handleNativeError(error);
-    } finally {
-      loading = false;
     }
   }
 
@@ -188,196 +167,19 @@
     });
   }
 
-  function scheduleRectSync() {
-    if (!mounted || !initialized || rectFrame) {
-      return;
-    }
-    rectFrame = requestAnimationFrame(() => {
-      rectFrame = 0;
-      void syncRect().catch(handleNativeError);
-    });
-  }
-
-  async function syncRect() {
-    if (!container || !initialized) {
-      return;
-    }
-    const rect = container.getBoundingClientRect();
-    const scale = await currentWindow.scaleFactor();
-    const origin = await currentWindow.innerPosition();
-    const width = Math.max(Math.round(rect.width * scale), 1);
-    const height = Math.max(Math.round(rect.height * scale), 1);
-    const x = Math.round(origin.x + rect.left * scale);
-    const y = Math.round(origin.y + rect.top * scale);
-
-    const viewportWidth = window.innerWidth * scale;
-    const viewportHeight = window.innerHeight * scale;
-    const visible =
-      rect.bottom > 0 &&
-      rect.right > 0 &&
-      rect.top < window.innerHeight &&
-      rect.left < window.innerWidth &&
-      x + width > origin.x &&
-      y + height > origin.y &&
-      x < origin.x + viewportWidth &&
-      y < origin.y + viewportHeight;
-
-    if (!visible) {
-      await setNativeViewportVisible(false);
-      return;
-    }
-
-    report = await setNativeViewportRect({ x, y, width, height });
-    await setNativeViewportVisible(true);
-  }
-
-  function pointerDown(event: PointerEvent) {
-    if (!initialized || event.button > 2) {
-      return;
-    }
-    container.focus();
-    pointerId = event.pointerId;
-    pointerMoved = false;
-    dragMode = event.button === 0 ? "orbit" : "pan";
-    container.setPointerCapture(event.pointerId);
-    event.preventDefault();
-  }
-
-  function pointerMove(event: PointerEvent) {
-    if (pointerId !== event.pointerId || !dragMode) {
-      return;
-    }
-    const width = Math.max(container.clientWidth, 1);
-    const height = Math.max(container.clientHeight, 1);
-    pendingDeltaX += event.movementX / width;
-    pendingDeltaY += event.movementY / height;
-    pointerMoved ||= Math.abs(event.movementX) + Math.abs(event.movementY) > 1;
-    scheduleInputFlush();
-    event.preventDefault();
-  }
-
-  function pointerUp(event: PointerEvent) {
-    if (pointerId !== event.pointerId) {
-      return;
-    }
-    if (container.hasPointerCapture(event.pointerId)) {
-      container.releasePointerCapture(event.pointerId);
-    }
-    const shouldPick = event.button === 0 && !pointerMoved;
-    pointerId = null;
-    dragMode = null;
-    if (shouldPick) {
-      void pickAt(event);
-    }
-    event.preventDefault();
-  }
-
-  function scheduleInputFlush() {
-    if (inputFrame) {
-      return;
-    }
-    inputFrame = requestAnimationFrame(() => {
-      inputFrame = 0;
-      const deltaX = pendingDeltaX;
-      const deltaY = pendingDeltaY;
-      pendingDeltaX = 0;
-      pendingDeltaY = 0;
-      const kind = dragMode;
-      if (!kind || (deltaX === 0 && deltaY === 0)) {
-        return;
-      }
-      void sendNativeViewportInput({ kind, deltaX, deltaY })
-        .then((next) => {
-          report = next;
-        })
-        .catch(handleNativeError);
-    });
-  }
-
-  function wheel(event: WheelEvent) {
-    if (!initialized) {
-      return;
-    }
-    event.preventDefault();
-    const delta = Math.max(-3, Math.min(3, event.deltaY / 240));
-    void sendNativeViewportInput({ kind: "zoom", delta })
-      .then((next) => {
-        report = next;
-      })
-      .catch(handleNativeError);
-  }
-
-  function keyDown(event: KeyboardEvent) {
-    if (!initialized || event.repeat) {
-      return;
-    }
-    const key = event.key.toLowerCase();
-    let forward = 0;
-    let right = 0;
-    let up = 0;
-    if (key === "w" || key === "arrowup") forward = 1;
-    else if (key === "s" || key === "arrowdown") forward = -1;
-    else if (key === "d" || key === "arrowright") right = 1;
-    else if (key === "a" || key === "arrowleft") right = -1;
-    else if (key === "e") up = 1;
-    else if (key === "q") up = -1;
-    else return;
-
-    event.preventDefault();
-    void sendNativeViewportInput({ kind: "fly", forward, right, up })
-      .then((next) => {
-        report = next;
-      })
-      .catch(handleNativeError);
-  }
-
-  async function pickAt(event: PointerEvent) {
-    const rect = container.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) {
-      return;
-    }
-    const x = (event.clientX - rect.left) / rect.width;
-    const y = (event.clientY - rect.top) / rect.height;
-    try {
-      const result = await pickNativeViewport(x, y);
-      report = result.viewport;
-      selectedNodeIndex = result.pick?.nodeIndex ?? null;
-      previousSelectedNodeIndex = selectedNodeIndex;
-    } catch (error) {
-      handleNativeError(error);
-    }
-  }
-
-  async function toggleProjection() {
-    projection = projection === "perspective" ? "orthographic" : "perspective";
-    try {
-      report = await setNativeViewportProjection(projection);
-    } catch (error) {
-      handleNativeError(error);
-    }
-  }
-
-  async function updateOverlays() {
-    try {
-      report = await setNativeViewportOverlays(grid, wireframe, bounds, collision);
-    } catch (error) {
-      handleNativeError(error);
-    }
-  }
-
-  async function refreshStats() {
-    try {
-      report = await getNativeViewportStats();
-    } catch (error) {
-      handleNativeError(error);
+  function applyReport(next: NativeViewportReport) {
+    report = next;
+    const nativeSelection = next.stats.selectedNodeIndex;
+    if (nativeSelection !== selectedNodeIndex) {
+      previousSelectedNodeIndex = nativeSelection;
+      selectedNodeIndex = nativeSelection;
     }
   }
 
   function handleNativeError(error: unknown) {
     const message =
-      error instanceof Error ? error.message : String(error ?? "Native viewport failed.");
+      error instanceof Error ? error.message : String(error ?? "Dedicated scene window failed.");
     renderError = message;
-    void setNativeViewportVisible(false).catch(() => {});
     onNativeFailure?.(message);
   }
 
@@ -386,197 +188,69 @@
   }
 </script>
 
-<section class="scene-viewport">
-  <div class="viewport-meta">
-    <div>
-      <p class="label">Native wgpu viewport</p>
-      <div class="meta-line">
-        <span>{report?.stats.instances ?? manifest?.summary.emittedNodes ?? 0} instances</span>
-        <span>{report?.stats.gpuAssetCache ?? 0} GPU assets</span>
-        <span>{report?.stats.gpuTextureCache ?? 0} GPU textures</span>
-        <span>{mib(report?.stats.uploadedPayloadBytes ?? 0)} MiB payload</span>
-        <span>{(report?.stats.sceneLoadMs ?? 0).toFixed(1)} ms load</span>
-        <span>{(report?.stats.lastFrameMs ?? 0).toFixed(2)} ms frame</span>
-        {#if selectedNodeIndex !== null}
-          <span>selected #{selectedNodeIndex}</span>
-        {/if}
-        {#if loading}
-          <span>loading…</span>
-        {/if}
-      </div>
-    </div>
-
-    <div class="viewport-actions">
-      <button type="button" class:active={projection === "orthographic"} onclick={toggleProjection}>
-        {projection === "perspective" ? "Perspective" : "Orthographic"}
-      </button>
-      <button type="button" class:active={grid} onclick={() => { grid = !grid; void updateOverlays(); }}>
-        Grid
-      </button>
-      <button type="button" class:active={wireframe} onclick={() => { wireframe = !wireframe; void updateOverlays(); }}>
-        Wire
-      </button>
-      <button type="button" class:active={bounds} onclick={() => { bounds = !bounds; void updateOverlays(); }}>
-        Bounds
-      </button>
-      <button type="button" class:active={collision} onclick={() => { collision = !collision; void updateOverlays(); }}>
-        Collision
-      </button>
-      <button type="button" onclick={refreshStats}>Stats</button>
-    </div>
+<section class="map-controller">
+  <div class="map-copy">
+    <p class="label">Dedicated native scene</p>
+    <h3>{initialized ? "Scene is open in its own window" : opening ? "Opening scene window…" : "Scene window is closed"}</h3>
+    <p>
+      The wgpu viewport runs in a separate native window instead of being positioned over
+      the Studio HTML. The inspector and authoring controls stay here.
+    </p>
   </div>
+
+  <div class="map-actions">
+    <button class="primary" type="button" onclick={() => void focusMap()} disabled={opening || loading}>
+      {initialized ? "Bring scene to front" : "Open scene window"}
+    </button>
+    <button type="button" class:active={projection === "orthographic"} onclick={() => void toggleProjection()} disabled={!initialized}>
+      {projection === "perspective" ? "Perspective" : "Orthographic"}
+    </button>
+    <button type="button" class:active={grid} onclick={() => { grid = !grid; void updateOverlays(); }} disabled={!initialized}>Grid</button>
+    <button type="button" class:active={wireframe} onclick={() => { wireframe = !wireframe; void updateOverlays(); }} disabled={!initialized}>Wire</button>
+    <button type="button" class:active={bounds} onclick={() => { bounds = !bounds; void updateOverlays(); }} disabled={!initialized}>Bounds</button>
+    <button type="button" class:active={collision} onclick={() => { collision = !collision; void updateOverlays(); }} disabled={!initialized}>Collision</button>
+  </div>
+
+  {#if report}
+    <div class="stats">
+      <span>{report.stats.instances} instances</span>
+      <span>{report.stats.gpuAssetCache} GPU assets</span>
+      <span>{report.stats.gpuTextureCache} GPU textures</span>
+      <span>{mib(report.stats.uploadedPayloadBytes)} MiB payload</span>
+      <span>{report.stats.sceneLoadMs.toFixed(1)} ms load</span>
+      <span>{report.stats.lastFrameMs.toFixed(2)} ms frame</span>
+      {#if selectedNodeIndex !== null}<span>selected #{selectedNodeIndex}</span>{/if}
+    </div>
+  {/if}
 
   {#if renderError}
     <div class="render-error" role="alert">{renderError}</div>
   {/if}
 
-  <button
-    type="button"
-    class="viewport native-input-surface"
-    bind:this={container}
-    aria-label="RageLab native scene viewport"
-    onpointerdown={pointerDown}
-    onpointermove={pointerMove}
-    onpointerup={pointerUp}
-    onpointercancel={pointerUp}
-    oncontextmenu={(event) => event.preventDefault()}
-    onwheel={wheel}
-    onkeydown={keyDown}
-  >
-    {#if !initialized || loading}
-      <span class="viewport-overlay">
-        <span>{initialized ? "Loading native scene…" : "Starting native renderer…"}</span>
-      </span>
-    {/if}
-  </button>
-
-  <div class="viewport-hint">
-    Left drag orbit · right/middle drag pan · wheel zoom · WASD/QE fly · click entity
-  </div>
+  <p class="hint">
+    Scene window: left drag look · right/middle drag pan · WASD/QE fly · Shift = faster · +/- zoom · Esc closes it.
+  </p>
 </section>
 
 <style>
-  .scene-viewport {
-    border: 1px solid #292e35;
+  .map-controller {
+    min-height: 160px;
+    padding: 16px;
+    border: 1px solid #29313a;
     border-radius: 10px;
-    overflow: hidden;
-    background: #0a0c0f;
-  }
-
-  .viewport-meta {
-    min-height: 58px;
-    padding: 10px 12px;
-    border-bottom: 1px solid #292e35;
-    background: #12151a;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-  }
-
-  .label {
-    margin: 0 0 5px;
-    color: #7d838c;
-    font-size: 11px;
-    font-weight: 650;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-  }
-
-  .meta-line,
-  .viewport-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-
-  .meta-line span {
-    padding: 3px 6px;
-    border: 1px solid #2d3239;
-    border-radius: 5px;
-    color: #9299a3;
-    font-size: 10px;
-  }
-
-  .viewport-actions {
-    justify-content: flex-end;
-  }
-
-  .viewport-actions button {
-    border: 1px solid #30363f;
-    border-radius: 5px;
-    background: #181c22;
-    color: #858c96;
-    padding: 5px 7px;
-    font: inherit;
-    font-size: 10px;
-    cursor: pointer;
-  }
-
-  .viewport-actions button:hover,
-  .viewport-actions button.active {
-    border-color: #526170;
-    color: #c0c8d2;
-    background: #20262d;
-  }
-
-  .viewport {
-    position: relative;
-    width: 100%;
-    height: min(58vh, 560px);
-    min-height: 360px;
-    padding: 0;
-    border: 0;
-    outline: none;
-    background: #0a0c0f;
-    color: inherit;
-    font: inherit;
-    text-align: left;
-    cursor: crosshair;
-  }
-
-  .viewport:focus-visible {
-    box-shadow: inset 0 0 0 1px #526170;
-  }
-
-  .viewport-overlay {
-    position: absolute;
-    inset: 0;
+    background: #0f1216;
     display: grid;
-    place-items: center;
-    color: #7d858f;
-    font-size: 11px;
-    pointer-events: none;
+    gap: 12px;
   }
-
-  .viewport-hint {
-    padding: 7px 12px;
-    border-top: 1px solid #292e35;
-    color: #626a74;
-    background: #111419;
-    font-size: 10px;
-  }
-
-  .render-error {
-    padding: 10px 14px;
-    border-bottom: 1px solid #493027;
-    background: #1c1411;
-    color: #d2a187;
-    font-size: 11px;
-  }
-
-  @media (max-width: 700px) {
-    .viewport-meta {
-      display: grid;
-    }
-
-    .viewport-actions {
-      justify-content: flex-start;
-    }
-
-    .viewport {
-      height: 360px;
-      min-height: 300px;
-    }
-  }
+  .label { margin: 0 0 5px; color: #7d838c; font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+  h3 { margin: 0; font-size: 17px; }
+  .map-copy p:not(.label) { margin: 7px 0 0; max-width: 680px; color: #858d98; font-size: 11px; line-height: 1.5; }
+  .map-actions,.stats { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  button { border:1px solid #30363f; border-radius:6px; background:#171b20; color:#aeb5be; padding:7px 9px; font:inherit; font-size:10px; cursor:pointer; }
+  button:hover:not(:disabled),button.active { border-color:#526170; background:#20262d; color:#d0d6dd; }
+  button.primary { border-color:#e5e7eb; background:#f3f4f6; color:#111318; font-weight:700; }
+  button:disabled { opacity:.45; cursor:default; }
+  .stats span { padding:3px 6px; border:1px solid #2d3239; border-radius:5px; color:#9299a3; font-size:9px; }
+  .hint { margin:0; color:#69717c; font-size:9px; }
+  .render-error { padding:9px 10px; border:1px solid #493027; border-radius:6px; background:#1c1411; color:#d2a187; font-size:10px; }
 </style>

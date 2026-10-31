@@ -2948,6 +2948,7 @@ dependencies = [
 name = "ragelab-ydr"
 version = "0.1.0"
 dependencies = [
+ "ragelab-hash",
  "ragelab-resource",
  "ragelab-ytd",
 ]

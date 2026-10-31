@@ -42,14 +42,9 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 try {
     Push-Location $root
     try {
-        & bun run build
+        & bun run tauri build --no-bundle
         if ($LASTEXITCODE -ne 0) {
-            throw "Studio frontend release build failed with exit code $LASTEXITCODE"
-        }
-
-        & cargo build --release --manifest-path src-tauri/Cargo.toml
-        if ($LASTEXITCODE -ne 0) {
-            throw "Studio Rust release build failed with exit code $LASTEXITCODE"
+            throw "Studio Tauri standalone release build failed with exit code $LASTEXITCODE"
         }
 
         $exe = Join-Path $root "src-tauri\target\release\ragelab-studio.exe"
