@@ -2,11 +2,37 @@ import { invoke } from "@tauri-apps/api/core";
 import { join } from "@tauri-apps/api/path";
 import { open, save } from "@tauri-apps/plugin-dialog";
 
-export interface StudioInfo {
-  product: string;
-  version: string;
-  coreRevision: string;
-}
+import type { StudioInfo } from "./generated/glb/StudioInfo";
+import type { GlbInspectionReport } from "./generated/glb/GlbInspectionReport";
+import type { DecodedGeometryReport } from "./generated/glb/DecodedGeometryReport";
+import type { DecodedPrimitive } from "./generated/glb/DecodedPrimitive";
+import type { GtaAuthoringProfile } from "./generated/glb/GtaAuthoringProfile";
+import type { TextureBindingInfo } from "./generated/glb/TextureBindingInfo";
+import type { MaterialAuthoringSettings } from "./generated/glb/MaterialAuthoringSettings";
+import type { ProfileValidationReport } from "./generated/glb/ProfileValidationReport";
+import type { GlbYdrExportReport } from "./generated/glb/GlbYdrExportReport";
+import type { StudioGlbExportReport } from "./generated/glb/StudioGlbExportReport";
+import type { GlbExportCommandRequest } from "./generated/glb/GlbExportCommandRequest";
+
+export type {
+  StudioInfo,
+  GlbInspectionReport,
+  GtaAuthoringProfile,
+  TextureBindingInfo,
+  MaterialAuthoringSettings,
+  ProfileValidationReport,
+  GlbYdrExportReport,
+  StudioGlbExportReport,
+};
+
+export type GlbGeometryReport = DecodedGeometryReport;
+export type GlbDecodedPrimitive = DecodedPrimitive;
+export type GlbTextureBindingInfo = TextureBindingInfo;
+export type GlbMaterialAuthoringSettings = MaterialAuthoringSettings;
+export type GlbProfileValidationReport = ProfileValidationReport;
+export type GlbExportOptions = Partial<
+  Pick<GlbExportCommandRequest, "profile" | "shaderTemplate" | "shaderIndex" | "overwrite">
+>;
 
 export interface DiagnosticsSummary {
   directory: string;
@@ -1062,6 +1088,46 @@ export function prepareGtaRpfIndex(
     request: {
       gameRoot,
       keys,
+    },
+  });
+}
+
+export function inspectGlb(path: string): Promise<GlbInspectionReport> {
+  return invoke<GlbInspectionReport>("core_glb_inspect", { path });
+}
+
+export function decodeGlbGeometry(path: string): Promise<GlbGeometryReport> {
+  return invoke<GlbGeometryReport>("core_glb_geometry", { path });
+}
+
+export function createGlbAuthoringProfile(
+  path: string,
+): Promise<GtaAuthoringProfile> {
+  return invoke<GtaAuthoringProfile>("core_glb_profile_init", { path });
+}
+
+export function validateGlbAuthoringProfile(
+  source: string,
+  profile: string,
+): Promise<GlbProfileValidationReport> {
+  return invoke<GlbProfileValidationReport>("core_glb_profile_validate", {
+    request: { source, profile },
+  });
+}
+
+export function exportGlbToYdr(
+  source: string,
+  output: string,
+  options: GlbExportOptions = {},
+): Promise<StudioGlbExportReport> {
+  return invoke<StudioGlbExportReport>("core_glb_export", {
+    request: {
+      source,
+      output,
+      profile: options.profile,
+      shaderTemplate: options.shaderTemplate,
+      shaderIndex: options.shaderIndex,
+      overwrite: options.overwrite ?? false,
     },
   });
 }

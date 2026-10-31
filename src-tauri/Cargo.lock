@@ -615,7 +615,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bdbd1f579714e3c809ebd822c81ef148b1ceaeb3d535352afc73fd0c4c6a0017"
 dependencies = [
  "bitflags 2.13.2",
- "libloading 0.7.4",
+ "libloading 0.8.9",
  "winapi",
 ]
 
@@ -1466,7 +1466,7 @@ dependencies = [
  "bitflags 2.13.2",
  "com",
  "libc",
- "libloading 0.7.4",
+ "libloading 0.8.9",
  "thiserror 1.0.69",
  "widestring",
  "winapi",
@@ -2847,6 +2847,7 @@ dependencies = [
  "bincode",
  "ragelab-assets",
  "ragelab-authoring",
+ "ragelab-gltf",
  "ragelab-hash",
  "ragelab-meta",
  "ragelab-resource",
@@ -2861,7 +2862,21 @@ dependencies = [
  "ragelab-ytyp",
  "serde",
  "serde_json",
+ "sha2",
+ "ts-rs",
  "winreg 0.52.0",
+]
+
+[[package]]
+name = "ragelab-gltf"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "png 0.17.16",
+ "serde",
+ "serde_json",
+ "sha2",
+ "ts-rs",
 ]
 
 [[package]]
@@ -2926,6 +2941,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
+ "ts-rs",
  "windows-sys 0.61.2",
 ]
 
@@ -4315,6 +4331,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
+name = "ts-rs"
+version = "12.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "756050066659291d47a554a9f558125db17428b073c5ffce1daf5dcb0f7231d8"
+dependencies = [
+ "serde_json",
+ "thiserror 2.0.21",
+ "ts-rs-macros",
+]
+
+[[package]]
+name = "ts-rs-macros"
+version = "12.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38d90eea51bc7988ef9e674bf80a85ba6804739e535e9cab48e4bb34a8b652aa"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+ "termcolor",
+]
+
+[[package]]
 name = "typeid"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4712,7 +4751,7 @@ dependencies = [
  "js-sys",
  "khronos-egl",
  "libc",
- "libloading 0.7.4",
+ "libloading 0.8.9",
  "log",
  "metal",
  "naga",

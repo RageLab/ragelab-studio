@@ -5,16 +5,21 @@ use std::{
 };
 
 use ragelab_engine::{
-    apply_operation_document, asset_capabilities, discover_fivem_legacy, discover_gta_v_legacy,
-    export_ytd_texture_png, inspect_asset, plan_operation_document, prepare_gta_rpf_index,
-    prepare_gta_rpf_keys, preview_asset, workspace_export_preflight_report,
+    apply_operation_document, asset_capabilities, decode_glb_geometry_bytes,
+    default_glb_authoring_profile, discover_fivem_legacy, discover_gta_v_legacy, export_glb_to_ydr,
+    export_ytd_texture_png, inspect_asset, inspect_glb_bytes, plan_operation_document,
+    prepare_gta_rpf_index, prepare_gta_rpf_keys, preview_asset,
+    validate_glb_authoring_profile_bytes, workspace_export_preflight_report,
     workspace_export_report, workspace_scene_asset_preview_with_game_index,
     workspace_scene_report_with_game_index, AssetCapabilitiesReport, AssetInspectionReport,
-    AssetPreviewReport, CatalogRefs, FiveMDiscoveryReport, GtaRpfIndexCacheReport,
-    GtaRpfKeyCacheReport, GtaVDiscoveryReport, OperationApplyResult, OperationDocument,
-    OperationPlan, PreviewOptions, SceneAssemblyOptions, SceneAssetPreviewSources,
-    SceneGameIndexSource, SceneManifestReport, SceneRpfMount, SharedExportOptions,
-    WorkspaceExportPreflightReport, WorkspaceExportReport, MAX_SCENE_NODE_LIMIT,
+    AssetPreviewReport, CatalogRefs, DecodedGeometryReport, FiveMDiscoveryReport,
+    GlbInspectionReport, GlbShaderTemplateFormat, GlbShaderTemplateInput, GlbYdrExportReport,
+    GlbYdrExportRequest, GtaAuthoringProfile, GtaRpfIndexCacheReport, GtaRpfKeyCacheReport,
+    GtaVDiscoveryReport, OperationApplyResult, OperationDocument, OperationPlan, PreviewOptions,
+    ProfileValidationReport, SceneAssemblyOptions, SceneAssetPreviewSources, SceneGameIndexSource,
+    SceneManifestReport, SceneRpfMount, SharedExportOptions, WorkspaceExportPreflightReport,
+    WorkspaceExportReport, CORE_API_COMPATIBILITY_VERSION, CORE_DIRTY, CORE_REVISION,
+    MAX_SCENE_NODE_LIMIT,
 };
 use serde::{Deserialize, Serialize};
 
@@ -43,14 +48,14 @@ use native_viewport::{
     native_viewport_world_stream_at, NativeViewportState,
 };
 
-const RAGELAB_CORE_REVISION: &str = "cba6fd257526ceaa412c6b4bfacc6f3c2da314eb";
-
-#[derive(Serialize)]
+#[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 struct StudioInfo {
     product: &'static str,
     version: &'static str,
     core_revision: &'static str,
+    core_dirty: bool,
+    core_api_compatibility: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -80,6 +85,34 @@ struct YtdTexturePngExportReport {
     output: String,
     bytes_written: usize,
     source_unchanged: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+struct GlbProfileValidateRequest {
+    source: String,
+    profile: String,
+}
+
+#[derive(Debug, Clone, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+struct GlbExportCommandRequest {
+    source: String,
+    output: String,
+    profile: Option<String>,
+    shader_template: Option<String>,
+    shader_index: Option<usize>,
+    #[serde(default)]
+    overwrite: bool,
+}
+
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+struct StudioGlbExportReport {
+    source: String,
+    output: String,
+    bytes_written: usize,
+    engine: GlbYdrExportReport,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -204,7 +237,9 @@ fn studio_info() -> StudioInfo {
     StudioInfo {
         product: "RageLab Studio",
         version: env!("CARGO_PKG_VERSION"),
-        core_revision: RAGELAB_CORE_REVISION,
+        core_revision: CORE_REVISION,
+        core_dirty: CORE_DIRTY,
+        core_api_compatibility: CORE_API_COMPATIBILITY_VERSION,
     }
 }
 
@@ -301,6 +336,215 @@ fn core_asset_inspect(path: String) -> Result<AssetInspectionReport, String> {
 #[tauri::command]
 fn core_asset_capabilities(path: String) -> Result<AssetCapabilitiesReport, String> {
     asset_capabilities(Path::new(&path)).map_err(core_error)
+}
+
+#[tauri::command]
+fn core_glb_inspect(path: String) -> Result<GlbInspectionReport, String> {
+    let source = require_absolute_file(&path, "GLB source")?;
+    let bytes = fs::read(&source).map_err(core_error)?;
+    let file_name = source
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("model.glb");
+    inspect_glb_bytes(&bytes, file_name).map_err(core_error)
+}
+
+#[tauri::command]
+fn core_glb_geometry(path: String) -> Result<DecodedGeometryReport, String> {
+    let source = require_absolute_file(&path, "GLB source")?;
+    let bytes = fs::read(&source).map_err(core_error)?;
+    let file_name = source
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("model.glb");
+    decode_glb_geometry_bytes(&bytes, file_name).map_err(core_error)
+}
+
+#[tauri::command]
+fn core_glb_profile_init(path: String) -> Result<GtaAuthoringProfile, String> {
+    let source = require_absolute_file(&path, "GLB source")?;
+    let bytes = fs::read(&source).map_err(core_error)?;
+    let file_name = source
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("model.glb");
+    default_glb_authoring_profile(&bytes, file_name).map_err(core_error)
+}
+
+#[tauri::command]
+fn core_glb_profile_validate(
+    request: GlbProfileValidateRequest,
+) -> Result<ProfileValidationReport, String> {
+    let source = require_absolute_file(&request.source, "GLB source")?;
+    let profile = require_absolute_file(&request.profile, "GLB authoring profile")?;
+    let source_bytes = fs::read(&source).map_err(core_error)?;
+    let profile_bytes = fs::read(&profile).map_err(core_error)?;
+    let file_name = source
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("model.glb");
+    validate_glb_authoring_profile_bytes(&source_bytes, file_name, &profile_bytes)
+        .map_err(core_error)
+}
+
+#[tauri::command]
+fn core_glb_export(request: GlbExportCommandRequest) -> Result<StudioGlbExportReport, String> {
+    let source = require_absolute_file(&request.source, "GLB source")?;
+    let output = PathBuf::from(&request.output);
+    if !output.is_absolute() {
+        return Err("Studio GLB YDR output must be an absolute path".into());
+    }
+    if output
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_none_or(|value| !value.eq_ignore_ascii_case("ydr"))
+    {
+        return Err("Studio GLB YDR output must use the .ydr extension".into());
+    }
+    ensure_distinct_glb_paths(&source, &output)?;
+    if output.exists() && !request.overwrite {
+        return Err(format!(
+            "Studio GLB YDR output already exists: {}",
+            output.display()
+        ));
+    }
+    let parent = output
+        .parent()
+        .ok_or_else(|| "Studio GLB YDR output must have a parent directory".to_string())?;
+    if !parent.is_dir() {
+        return Err(format!(
+            "Studio GLB YDR output parent is not a directory: {}",
+            parent.display()
+        ));
+    }
+
+    let source_bytes = fs::read(&source).map_err(core_error)?;
+    let source_name = source
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("model.glb")
+        .to_owned();
+    let profile_path = request
+        .profile
+        .as_deref()
+        .map(|value| require_absolute_file(value, "GLB authoring profile"))
+        .transpose()?;
+    if let Some(path) = profile_path.as_ref() {
+        ensure_distinct_glb_paths(path, &output)?;
+    }
+    let profile_bytes = profile_path
+        .as_ref()
+        .map(fs::read)
+        .transpose()
+        .map_err(core_error)?;
+    let profile_snapshot = profile_bytes.clone();
+
+    let template_path = request
+        .shader_template
+        .as_deref()
+        .map(|value| require_absolute_file(value, "Legacy shader template"))
+        .transpose()?;
+    let shader_template = if let Some(path) = template_path.as_ref() {
+        ensure_distinct_glb_paths(path, &output)?;
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let format = match extension.as_str() {
+            "yft" => GlbShaderTemplateFormat::LegacyYft,
+            "ydr" => GlbShaderTemplateFormat::LegacyYdr,
+            _ => return Err("Legacy shader template must be a .yft or .ydr resource".into()),
+        };
+        Some(GlbShaderTemplateInput {
+            format,
+            source_name: path.display().to_string(),
+            bytes: fs::read(path).map_err(core_error)?,
+        })
+    } else {
+        None
+    };
+    let template_snapshot = shader_template
+        .as_ref()
+        .map(|template| template.bytes.clone());
+
+    let result = export_glb_to_ydr(GlbYdrExportRequest {
+        source_name,
+        source_bytes: source_bytes.clone(),
+        profile_bytes,
+        shader_template,
+        shader_index: request.shader_index.unwrap_or(0),
+    })
+    .map_err(core_error)?;
+
+    verify_glb_input_unchanged(&source, &source_bytes)?;
+    if let (Some(path), Some(expected)) = (profile_path.as_ref(), profile_snapshot.as_deref()) {
+        verify_glb_input_unchanged(path, expected)?;
+    }
+    if let (Some(path), Some(expected)) = (template_path.as_ref(), template_snapshot.as_deref()) {
+        verify_glb_input_unchanged(path, expected)?;
+    }
+
+    let mut options = fs::OpenOptions::new();
+    options.write(true);
+    if request.overwrite {
+        options.create(true).truncate(true);
+    } else {
+        options.create_new(true);
+    }
+    let mut file = options.open(&output).map_err(core_error)?;
+    file.write_all(&result.output_bytes).map_err(core_error)?;
+    file.sync_all().map_err(core_error)?;
+
+    Ok(StudioGlbExportReport {
+        source: source.display().to_string(),
+        output: output.display().to_string(),
+        bytes_written: result.output_bytes.len(),
+        engine: result.report,
+    })
+}
+
+fn require_absolute_file(path: &str, label: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(path);
+    if !path.is_absolute() {
+        return Err(format!("{label} must be an absolute path"));
+    }
+    if !path.is_file() {
+        return Err(format!("{label} is not a file: {}", path.display()));
+    }
+    Ok(path)
+}
+
+fn ensure_distinct_glb_paths(input: &Path, output: &Path) -> Result<(), String> {
+    let input = input.canonicalize().map_err(core_error)?;
+    let output_abs = if output.exists() {
+        output.canonicalize().map_err(core_error)?
+    } else {
+        let parent = output
+            .parent()
+            .filter(|value| !value.as_os_str().is_empty())
+            .unwrap_or(Path::new("."))
+            .canonicalize()
+            .map_err(core_error)?;
+        let name = output
+            .file_name()
+            .ok_or_else(|| "GLB YDR output must name a file".to_string())?;
+        parent.join(name)
+    };
+    if input == output_abs {
+        return Err("GLB YDR output must not overwrite any input resource".into());
+    }
+    Ok(())
+}
+
+fn verify_glb_input_unchanged(path: &Path, expected: &[u8]) -> Result<(), String> {
+    if fs::read(path).map_err(core_error)? != expected {
+        return Err(format!(
+            "GLB export input changed during processing: {}",
+            path.display()
+        ));
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -710,24 +954,21 @@ fn core_error(error: impl std::fmt::Display) -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    diagnostics::init(RAGELAB_CORE_REVISION);
+    diagnostics::init(CORE_REVISION);
 
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(NativeViewportState::default())
         .manage(AuthoringState::default())
         .setup(|app| {
-            native_viewport::maybe_start_viewport_smoke(
-                app.handle().clone(),
-                RAGELAB_CORE_REVISION,
-            );
+            native_viewport::maybe_start_viewport_smoke(app.handle().clone(), CORE_REVISION);
             #[cfg(debug_assertions)]
             {
                 native_viewport::maybe_start_debug_open(app.handle().clone());
                 native_viewport::maybe_start_debug_world_open(app.handle().clone());
                 native_viewport::maybe_start_debug_world_stream_smoke(
                     app.handle().clone(),
-                    RAGELAB_CORE_REVISION,
+                    CORE_REVISION,
                 );
             }
             Ok(())
@@ -740,6 +981,11 @@ pub fn run() {
             core_prepare_gta_rpf_index,
             core_asset_inspect,
             core_asset_capabilities,
+            core_glb_inspect,
+            core_glb_geometry,
+            core_glb_profile_init,
+            core_glb_profile_validate,
+            core_glb_export,
             core_ytd_export_png,
             core_asset_preview,
             core_workspace_scene,
@@ -821,9 +1067,158 @@ mod tests {
     }
 
     #[test]
-    fn studio_info_exposes_pinned_core_revision() {
+    fn studio_info_exposes_core_build_metadata_and_api_compatibility() {
         let info = studio_info();
-        assert_eq!(info.core_revision, RAGELAB_CORE_REVISION);
+        assert_eq!(info.core_revision, CORE_REVISION);
+        assert!(!info.core_revision.is_empty());
+        assert_eq!(info.core_dirty, CORE_DIRTY);
+        assert_eq!(info.core_api_compatibility, CORE_API_COMPATIBILITY_VERSION);
+        assert!(info.core_api_compatibility > 0);
+    }
+
+    #[test]
+    fn export_glb_typescript_bindings() {
+        use ts_rs::{Config, TS};
+
+        let output = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../src/lib/generated/glb");
+        let config = Config::new().with_out_dir(output);
+
+        StudioInfo::export_all(&config).unwrap();
+        GlbProfileValidateRequest::export_all(&config).unwrap();
+        GlbExportCommandRequest::export_all(&config).unwrap();
+        StudioGlbExportReport::export_all(&config).unwrap();
+        GlbInspectionReport::export_all(&config).unwrap();
+        DecodedGeometryReport::export_all(&config).unwrap();
+        GtaAuthoringProfile::export_all(&config).unwrap();
+        ProfileValidationReport::export_all(&config).unwrap();
+        GlbYdrExportReport::export_all(&config).unwrap();
+    }
+
+    #[test]
+    fn glb_tauri_adapter_uses_engine_pipeline_without_overwriting_inputs_or_outputs() {
+        let base = std::env::temp_dir().join(format!("ragelab-studio-glb-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let source = base.join("triangle.glb");
+        let profile_path = base.join("triangle.profile.json");
+        let output = base.join("triangle.ydr");
+        let source_bytes = triangle_glb_bytes();
+        fs::write(&source, &source_bytes).unwrap();
+
+        let inspection = core_glb_inspect(source.display().to_string()).unwrap();
+        assert_eq!(inspection.source.file_name, "triangle.glb");
+        let geometry = core_glb_geometry(source.display().to_string()).unwrap();
+        assert_eq!(geometry.primitives.len(), 1);
+        assert_eq!(geometry.primitives[0].vertex_count, 3);
+
+        let profile = core_glb_profile_init(source.display().to_string()).unwrap();
+        fs::write(&profile_path, serde_json::to_vec_pretty(&profile).unwrap()).unwrap();
+        let validation = core_glb_profile_validate(GlbProfileValidateRequest {
+            source: source.display().to_string(),
+            profile: profile_path.display().to_string(),
+        })
+        .unwrap();
+        assert!(validation.valid);
+
+        let result = core_glb_export(GlbExportCommandRequest {
+            source: source.display().to_string(),
+            output: output.display().to_string(),
+            profile: Some(profile_path.display().to_string()),
+            shader_template: None,
+            shader_index: None,
+            overwrite: false,
+        })
+        .unwrap();
+        assert!(result.engine.semantic_reopen);
+        assert!(!result.engine.runtime_renderable);
+        assert!(output.is_file());
+        assert_eq!(
+            result.bytes_written,
+            fs::metadata(&output).unwrap().len() as usize
+        );
+        assert_eq!(fs::read(&source).unwrap(), source_bytes);
+
+        let refused_overwrite = core_glb_export(GlbExportCommandRequest {
+            source: source.display().to_string(),
+            output: output.display().to_string(),
+            profile: Some(profile_path.display().to_string()),
+            shader_template: None,
+            shader_index: None,
+            overwrite: false,
+        })
+        .unwrap_err();
+        assert!(refused_overwrite.contains("already exists"));
+        assert_eq!(fs::read(&source).unwrap(), source_bytes);
+
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    fn triangle_glb_bytes() -> Vec<u8> {
+        let mut binary = Vec::new();
+        for vertex in [[0.0_f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
+            for component in vertex {
+                binary.extend_from_slice(&component.to_le_bytes());
+            }
+        }
+        let indices_offset = binary.len();
+        for index in [0_u16, 1, 2] {
+            binary.extend_from_slice(&index.to_le_bytes());
+        }
+        while binary.len() % 4 != 0 {
+            binary.push(0);
+        }
+
+        let document = serde_json::json!({
+            "asset": {"version": "2.0", "generator": "RageLab Studio Tauri integration test"},
+            "scene": 0,
+            "scenes": [{"nodes": [0]}],
+            "nodes": [{"name": "Triangle", "mesh": 0}],
+            "meshes": [{
+                "name": "TriangleMesh",
+                "primitives": [{
+                    "attributes": {"POSITION": 0},
+                    "indices": 1
+                }]
+            }],
+            "accessors": [
+                {
+                    "bufferView": 0,
+                    "componentType": 5126,
+                    "count": 3,
+                    "type": "VEC3",
+                    "min": [0.0, 0.0, 0.0],
+                    "max": [1.0, 1.0, 0.0]
+                },
+                {
+                    "bufferView": 1,
+                    "componentType": 5123,
+                    "count": 3,
+                    "type": "SCALAR"
+                }
+            ],
+            "bufferViews": [
+                {"buffer": 0, "byteOffset": 0, "byteLength": 36},
+                {"buffer": 0, "byteOffset": indices_offset, "byteLength": 6}
+            ],
+            "buffers": [{"byteLength": binary.len()}]
+        });
+        let mut json_chunk = serde_json::to_vec(&document).unwrap();
+        while !json_chunk.len().is_multiple_of(4) {
+            json_chunk.push(b' ');
+        }
+        let total_length = 12 + 8 + json_chunk.len() + 8 + binary.len();
+        let mut bytes = Vec::with_capacity(total_length);
+        bytes.extend_from_slice(b"glTF");
+        bytes.extend_from_slice(&2_u32.to_le_bytes());
+        bytes.extend_from_slice(&(total_length as u32).to_le_bytes());
+        bytes.extend_from_slice(&(json_chunk.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&0x4E4F534A_u32.to_le_bytes());
+        bytes.extend_from_slice(&json_chunk);
+        bytes.extend_from_slice(&(binary.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&0x004E4942_u32.to_le_bytes());
+        bytes.extend_from_slice(&binary);
+        bytes
     }
 
     #[test]
